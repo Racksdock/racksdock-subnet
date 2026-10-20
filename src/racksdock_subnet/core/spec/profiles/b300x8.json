@@ -1,0 +1,18 @@
+{
+  "name": "b300x8",
+  "production": true,
+  "gpu_count": 8,
+  "gpu_model": "B300",
+  "instance_type": "B300x8",
+  "interconnect": "nvlink",
+  "reference_set": "ref_dev_v0",
+  "checks": ["Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13", "Q14", "Q15"],
+  "weekly_checks": ["Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "Q9", "Q11", "Q12", "Q13"],
+  "dcgm_level": 3,
+  "dcgm_level_weekly": 2,
+  "power_limit_w": 0,
+  "allowlist_entries": [],
+  "fio_dir": "/data",
+  "sim_pci_id": "10de:b300",
+  "notes": "Production profile: whole HGX 8xB300 node. power_limit_w 0 defers to the allowlist power profile."
+}

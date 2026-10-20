@@ -1,0 +1,25 @@
+{
+  "schema": "racksdock.platforms.v1",
+  "spec_version": "0.1.0",
+  "platforms": [
+    {
+      "id": "sim-hgx-racksdock",
+      "sim": true,
+      "oem": "Simulated",
+      "model": "SIM-HGX-B300",
+      "bios_min": "0", "bmc_min": "0", "nvswitch_fw_min": "0",
+      "physical_cores_min": 96,
+      "memory_gb_min": 1536,
+      "data_nvme_tb_min": 15,
+      "reference_set": "ref_dev_v0"
+    }
+  ],
+  "vm_floors": {
+    "host_core_reservation": 8,
+    "host_memory_reservation_gb": 64,
+    "os_disk_gb": 200,
+    "data_disk_tb_min": 15,
+    "boot_to_active_target_s": 300,
+    "boot_to_active_limit_s": 600
+  }
+}

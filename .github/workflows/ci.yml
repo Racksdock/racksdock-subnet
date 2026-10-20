@@ -1,0 +1,16 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: racksdock-subnet }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ github.repository_owner }}/racksdock-node", path: racksdock-node }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ github.repository_owner }}/racksdock-platform", path: racksdock-platform }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e racksdock-subnet -e racksdock-node -e racksdock-platform && pip install -e "racksdock-subnet[test,dev]"
+      - run: cd racksdock-subnet && ruff check src tests && pytest

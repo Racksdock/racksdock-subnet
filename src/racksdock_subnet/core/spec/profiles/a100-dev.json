@@ -1,0 +1,113 @@
+{
+  "name": "a100-dev",
+  "production": false,
+  "gpu_count": 1,
+  "gpu_model": "A100",
+  "instance_type": "A100x1-DEV",
+  "interconnect": "none",
+  "reference_set": "ref_a100_dev_v0",
+  "checks": [
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q9",
+    "Q10",
+    "Q11",
+    "Q12",
+    "Q13"
+  ],
+  "weekly_checks": [
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q9",
+    "Q11",
+    "Q12",
+    "Q13"
+  ],
+  "dcgm_level": 2,
+  "dcgm_level_weekly": 1,
+  "power_limit_w": 0,
+  "allowlist_entries": [
+    {
+      "pci_device_id": "10de:20b0",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 35,
+      "arch": "ampere",
+      "hwmodel_patterns": [
+        "A100-SXM4-40GB"
+      ]
+    },
+    {
+      "pci_device_id": "10de:20b2",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 70,
+      "arch": "ampere",
+      "hwmodel_patterns": [
+        "A100-SXM4-80GB"
+      ]
+    },
+    {
+      "pci_device_id": "10de:20b5",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 70,
+      "arch": "ampere",
+      "hwmodel_patterns": [
+        "A100-PCIE-80GB"
+      ]
+    },
+    {
+      "pci_device_id": "10de:20f1",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 35,
+      "arch": "ampere",
+      "hwmodel_patterns": [
+        "A100-PCIE-40GB"
+      ]
+    },
+    {
+      "pci_device_id": "10de:20f3",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 55,
+      "arch": "ampere",
+      "hwmodel_patterns": [
+        "A100-SXM-64GB"
+      ]
+    },
+    {
+      "pci_device_id": "10de:20b7",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 20,
+      "arch": "ampere",
+      "hwmodel_patterns": [
+        "A30"
+      ]
+    }
+  ],
+  "fio_dir": "/tmp/racksdock-fio",
+  "sim_pci_id": "10de:20b2",
+  "notes": "A100-ONLY WORKFLOW TEST PROFILE. Delete this file after the test (see racksdock-node/docs/a100-workflow-test.md). Ampere has no device attestation, so Q1 uses the dev CA; NVLink and workload checks are excluded; the reference set is deliberately lenient.",
+  "extra": {
+    "power_minutes": 3,
+    "fio_sustained_s": 120,
+    "sysbench_s": 60
+  }
+}

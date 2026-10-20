@@ -1,0 +1,26 @@
+{
+  "schema": "racksdock.reference.v1",
+  "name": "ref_a100_dev_v0",
+  "platform": "a100-dev",
+  "catalog_release": "dev",
+  "notes": "A100-ONLY WORKFLOW TEST REFERENCE. Deliberately lenient so a typical cloud A100 box passes; delete after the test.",
+  "values": {
+    "gpu.vram_gb_usable_min": 75,
+    "hbm_write_gbps": 800,
+    "cpu.vcpus": 4,
+    "cpu.stream_gbps": 8,
+    "cpu.sysbench": 2000,
+    "memory_gb": 16,
+    "nvme.capacity_tb": 0.05,
+    "nvme.seq_read_gbps": 0.3,
+    "nvme.seq_write_gbps": 0.2,
+    "nvme.rand_read_kiops": 10,
+    "nvme.rand_write_kiops": 5,
+    "nvme.sustained_write_gbps": 0.15,
+    "network.down_gbps": 0.2,
+    "network.up_gbps": 0.2,
+    "power_profile.limit_w": 0,
+    "training_tokens_per_s": 1,
+    "inference_tokens_per_s": 1
+  }
+}

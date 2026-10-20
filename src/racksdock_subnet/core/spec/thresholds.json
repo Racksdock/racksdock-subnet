@@ -1,0 +1,25 @@
+{
+  "schema": "racksdock.thresholds.v1",
+  "ratio_floor": 0.90,
+  "pair_outlier_floor_of_node_median": 0.80,
+  "perf_gate": 0.90,
+  "qualification_validity_days": 7,
+  "canary_mean_interval_s": 10800,
+  "canary_deadline_s": 600,
+  "inrental_attest_interval_s": 600,
+  "inrental_microbench_interval_s": 1800,
+  "reachability_interval_s": 60,
+  "heartbeat_interval_s": 60,
+  "heartbeat_lost_degraded_s": 900,
+  "pending_provider_limit_s": 600,
+  "pending_limit_s": 600,
+  "core_perf_metrics": [
+    "nvlink.d2d_gbps_aggregate",
+    "nvlink.allreduce_1gb_busbw_gbps",
+    "hbm_write_gbps",
+    "training_tokens_per_s",
+    "inference_tokens_per_s",
+    "cpu.stream_gbps",
+    "nvme.seq_write_gbps"
+  ]
+}

@@ -1,0 +1,87 @@
+"""In-rental checks (docs/03 §7): attestation + allowlisted health via relayed challenge, and reachability probes."""
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from racksdock_subnet.core.envelope import SignedEnvelope, utcnow_iso
+from racksdock_subnet.core.identity import gpu_set_hash
+from racksdock_subnet.core.nonce import new_nonce_hex
+from racksdock_subnet.core.schemas import Challenge, ChallengeResponse, InRentalCheckResult, ReachabilityProbe
+
+from .platform import PlatformClient
+
+log = logging.getLogger("racksdock.validator.inrental")
+
+THROTTLE_MASK = 0x4 | 0x8 | 0x20 | 0x40 | 0x80
+
+
+async def probe(ip: str, port: int, timeout: float = 3.0) -> tuple[bool, float | None]:
+    import time
+
+    t0 = time.perf_counter()
+    try:
+        r, w = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout)
+        try:
+            banner = await asyncio.wait_for(r.readline(), timeout)
+        finally:
+            w.close()
+        return banner.startswith(b"SSH-"), (time.perf_counter() - t0) * 1000
+    except Exception:
+        return False, None
+
+
+async def check_instance(cfg, platform: PlatformClient, verifier, lease: dict, node: dict, include_microbench: bool, approved_power_w: float) -> InRentalCheckResult:
+    iid, node_id = lease["instance_id"], lease["node_id"]
+    nonce = new_nonce_hex()
+    fields = ["attestation", "health"] + (["microbench"] if include_microbench else [])
+    ch = Challenge(instance_id=iid, nonce=nonce, fields=fields, validator_key=platform.key.public.hex)
+    reachable, _ = await probe(lease["ip"], lease["ssh_port"]) if lease.get("ip") else (None, None)
+    try:
+        resp_env = SignedEnvelope.model_validate(await platform.challenge(node_id, ch.model_dump()))
+    except RuntimeError as e:
+        return InRentalCheckResult(node_id=node_id, instance_id=iid, validator_key=platform.key.public.hex, checked_at=utcnow_iso(), attestation_ok=False, gpu_ids_match=False,
+                                   reachable=reachable, error=f"challenge failed: {e}"[:200])
+    errors = []
+    expected_signer = lease.get("node_agent_pubkey")
+    if not resp_env.verify(expected_signer=expected_signer) or resp_env.kind != "challenge_response":
+        errors.append("response not signed by the attested node-agent key")
+    resp = ChallengeResponse.model_validate(resp_env.payload)
+    if resp.error:
+        errors.append(resp.error)
+    att_ok, ids_match = False, False
+    if resp.bundle is not None and not errors:
+        res = verifier.verify(resp.bundle, nonce)
+        att_ok = res.ok
+        ids_match = set(res.gpu_ids) == set(node["registration"]["gpu_ids"])
+        if not att_ok:
+            errors.extend(res.errors)
+    health = resp.health
+    if health is not None:
+        if health.gpu_ids_hash != gpu_set_hash(node["registration"]["gpu_ids"]):
+            errors.append("health gpu_ids_hash != registration")
+        for g in health.gpus:
+            if g.clocks_throttle_reasons & THROTTLE_MASK:
+                errors.append(f"gpu {g.index} throttled (0x{g.clocks_throttle_reasons:x})")
+            if approved_power_w and g.power_limit_w < approved_power_w - 1:
+                errors.append(f"gpu {g.index} power limit {g.power_limit_w} < approved {approved_power_w}")
+            if g.ecc_uncorrectable_total > 0:
+                errors.append(f"gpu {g.index} uncorrectable ECC {g.ecc_uncorrectable_total}")
+    result = InRentalCheckResult(node_id=node_id, instance_id=iid, validator_key=platform.key.public.hex, checked_at=utcnow_iso(), attestation_ok=att_ok, gpu_ids_match=ids_match,
+                                 health=health, reachable=reachable, error="; ".join(errors)[:300] if errors else None)
+    await platform.publish("inrental", result.model_dump(by_alias=True, mode="json"))
+    # consequences (docs/04 §7)
+    if att_ok and not ids_match:
+        await platform.incident(iid, "identity_change", "attested GPU set differs from registration", strike=True)
+    elif health is not None and any("throttled" in e or "power limit" in e for e in errors):
+        await platform.incident(iid, "power_profile", "; ".join(errors)[:200], strike=True)
+    elif health is not None and any("ECC" in e for e in errors):
+        await platform.incident(iid, "gpu_fault", "; ".join(errors)[:200], strike=False)
+    return result
+
+
+async def probe_lease(platform: PlatformClient, lease: dict) -> ReachabilityProbe:
+    ok, lat = await probe(lease["ip"], lease["ssh_port"]) if lease.get("ip") else (False, None)
+    p = ReachabilityProbe(node_id=lease["node_id"], instance_id=lease["instance_id"], validator_key=platform.key.public.hex, probed_at=utcnow_iso(), reachable=ok, latency_ms=lat)
+    await platform.publish("probe", p.model_dump(mode="json"))
+    return p

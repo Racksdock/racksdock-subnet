@@ -1,0 +1,29 @@
+{
+  "schema": "racksdock.reference.v1",
+  "name": "ref_dev_v0",
+  "platform": "sim-hgx-racksdock",
+  "catalog_release": "v2026.10.1",
+  "notes": "Development reference values for the simulator. Real values come from reference nodes.",
+  "values": {
+    "gpu.vram_gb_usable_min": 268,
+    "nvlink.d2d_gbps_min_pair": 780,
+    "nvlink.d2d_gbps_aggregate": 6200,
+    "nvlink.allreduce_1gb_busbw_gbps": 740,
+    "hbm_write_gbps": 7200,
+    "cpu.vcpus": 120,
+    "cpu.stream_gbps": 420,
+    "cpu.sysbench": 180000,
+    "memory_gb": 1850,
+    "nvme.capacity_tb": 28,
+    "nvme.seq_read_gbps": 42,
+    "nvme.seq_write_gbps": 30,
+    "nvme.rand_read_kiops": 6000,
+    "nvme.rand_write_kiops": 2500,
+    "nvme.sustained_write_gbps": 24,
+    "network.down_gbps": 25,
+    "network.up_gbps": 25,
+    "power_profile.limit_w": 1400,
+    "training_tokens_per_s": 185000,
+    "inference_tokens_per_s": 42000
+  }
+}

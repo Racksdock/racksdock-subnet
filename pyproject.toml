@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "racksdock-subnet"
+version = "0.1.0"
+description = "8xB300 subnet: shared protocol (core), attestation verification (verifier), validator and miner neurons"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.5", "cryptography>=42", "pyyaml>=6", "httpx>=0.27", "typer>=0.12"]
+
+[project.optional-dependencies]
+validator = ["asyncssh>=2.14"]
+chain = ["bittensor>=9"]
+nvml = ["nvidia-ml-py>=12"]
+test = ["pytest>=8", "pytest-asyncio>=0.23", "asyncssh>=2.14", "racksdock-node", "racksdock-platform", "uvicorn"]
+dev = ["ruff>=0.5"]
+
+[project.scripts]
+racksdock-verify = "racksdock_subnet.verifier.cli:app"
+racksdock-validator = "racksdock_subnet.validator.cli:app"
+racksdock-miner = "racksdock_subnet.miner.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"racksdock_subnet.core" = ["spec/*.json", "spec/reference-sets/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q -p no:cacheprovider"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["B008", "E501", "RUF012", "SIM115", "SIM108", "SIM105", "RUF015", "RUF059", "RUF002", "RUF006", "RUF007", "B904", "B905", "B007"]
