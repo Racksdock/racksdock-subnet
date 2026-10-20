@@ -1,0 +1,68 @@
+{
+  "name": "rtx4090x8-dev",
+  "production": false,
+  "gpu_count": 8,
+  "gpu_model": "RTX 4090",
+  "instance_type": "RTX4090x8-DEV",
+  "interconnect": "pcie",
+  "reference_set": "ref_rtx4090_dev_v0",
+  "checks": [
+    "Q2",
+    "Q3",
+    "Q7",
+    "Q8",
+    "Q9",
+    "Q10",
+    "Q11",
+    "Q12",
+    "Q13"
+  ],
+  "weekly_checks": [
+    "Q2",
+    "Q3",
+    "Q8",
+    "Q9",
+    "Q11",
+    "Q12",
+    "Q13"
+  ],
+  "dcgm_level": 2,
+  "dcgm_level_weekly": 1,
+  "power_limit_w": 0,
+  "allowlist_entries": [
+    {
+      "pci_device_id": "10de:2684",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 22,
+      "arch": "ada",
+      "hwmodel_patterns": [
+        "GeForce RTX 4090"
+      ]
+    },
+    {
+      "pci_device_id": "10de:2685",
+      "sim": true,
+      "board_part_numbers": [],
+      "vbios_min": "",
+      "vbios_max": "",
+      "hbm_usable_floor_gb": 22,
+      "arch": "ada",
+      "hwmodel_patterns": [
+        "GeForce RTX 4090 D"
+      ]
+    }
+  ],
+  "fio_dir": "/data",
+  "sim_pci_id": "10de:2684",
+  "extra": {
+    "power_minutes": 3,
+    "fio_sustained_s": 120,
+    "fio_size_gb": 2,
+    "fio_numjobs": 4,
+    "dcgm_mandatory": []
+  },
+  "notes": "RTX 4090 x8 BARE-METAL VM TEST PROFILE (temporary; delete after the test, see racksdock-node/docs/rtx4090-vm-test.md). Exercises the real libvirt/VFIO path. Ada has no device attestation (dev CA); GeForce has no NVLink and no PCIe P2P (Q5/Q6 excluded, Q8 runs NCCL over host memory); DCGM diag does not support GeForce (Q4 excluded); workload containers excluded (Q14/Q15)."
+}

@@ -194,12 +194,39 @@ class ValidatorNeuron:
 
     async def run(self) -> None:
         await self.ensure_enrolled()
+        from racksdock_subnet.core.profile import current as current_profile
+
+        prof = current_profile()
+        log.info("validator started: key=%s hotkey=%s platform=%s profile=%s runner=%s trust=%s tempo=%ss canary_mean=%ss inrental=%ss",
+                 self.key.public.hex[:12], self.cfg.hotkey, self.cfg.platform_url, prof.name, self.cfg.runner, self.cfg.trust.mode,
+                 int(self.cfg.tempo_s), int(self.cfg.canary_mean_interval_s), int(self.cfg.inrental_interval_s))
+        last_status = 0.0
         while not self._stop.is_set():
             try:
                 await self.step()
             except Exception as e:
                 log.exception("step failed: %s", e)
+            if time.time() - last_status >= 60:
+                last_status = time.time()
+                await self._log_status()
             await asyncio.sleep(self.cfg.loop_interval_s)
+
+    async def _log_status(self) -> None:
+        """One line per minute so an idle validator is visibly alive."""
+        try:
+            nodes = await self.platform.nodes()
+            leases = await self.platform.leases(live_only=True)
+        except Exception as e:
+            log.warning("status: platform unreachable (%s)", e)
+            return
+        by_status: dict[str, int] = {}
+        for n in nodes:
+            by_status[n["status"]] = by_status.get(n["status"], 0) + 1
+        now = time.time()
+        next_canary = min((t - now for t in self.canaries.next_at.values()), default=None)
+        log.info("status: nodes=%d %s | live leases=%d (tenant %d) | busy=%d | next scoring in %ds | next idle canary in %s",
+                 len(nodes), by_status, len(leases), sum(1 for lease in leases if not lease["is_validator"]), len(self.busy),
+                 int(self.cfg.tempo_s - (now - self.tempo_start)), f"{int(next_canary)}s" if next_canary is not None else "n/a")
 
     def stop(self) -> None:
         self._stop.set()

@@ -69,3 +69,16 @@ def test_a100_suite_passes_in_simulation(a100):
     assert gate_ok({k: v for k, v in r.items() if k in r})[0] and perf_score(r) > 0.9
     sm = asyncio.run(smoke(Ctx(runner=SimRunner(), reference=a100.reference_set, dev_mode=True, claimed_vcpus=0, profile=a100)))
     assert sm["marker"] == "absent" and sm["nccl_wrong"] == 0
+
+
+def test_rtx4090_profile_is_eight_gpu_pcie_and_excludes_checks_geforce_cannot_run(monkeypatch):
+    """TEMPORARY (delete with the profile): the 8x RTX 4090 bare-metal VM test profile."""
+    monkeypatch.setenv(profile.PROFILE_ENV, "rtx4090x8-dev")
+    p = profile.current()
+    assert p.gpu_count == 8 and not p.production and p.interconnect == "pcie" and p.instance_type == "RTX4090x8-DEV"
+    for cid in ("Q4", "Q5", "Q6", "Q14", "Q15"):
+        assert not p.enabled(cid)
+    for cid in ("Q2", "Q3", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13"):
+        assert p.enabled(cid)
+    assert p.power_limit_w == 0 and p.sim_pci_id == "10de:2684" and p.extra["fio_size_gb"] == 2
+    assert specdata.reference_set(p.reference_set)["values"]["gpu.vram_gb_usable_min"] == 22

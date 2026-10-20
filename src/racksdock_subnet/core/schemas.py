@@ -389,10 +389,15 @@ class VmResources(BaseModel):
     gpu_pci: list[str] = Field(default_factory=list)
     nvswitch_pci: list[str] = Field(default_factory=list)
     nvme_pci: list[str] = Field(default_factory=list)
+    # other endpoint functions sharing a GPU's IOMMU group (e.g. a GeForce card's HDMI audio function); passed through with it
+    extra_pci: list[str] = Field(default_factory=list)
     nic_vf_pci: str | None = None
     vcpus: int = 8
     memory_gb: int = 16
     os_disk_gb: int = 200
+    data_disk_gb: int = 0  # virtio data disk (serial "racksdock-data") when no NVMe controller is passed through
+    hugepage_kib: int = 1048576  # 0 = no hugepage backing (hosts without reserved hugepages, e.g. lab boxes)
+    pci_mmio64_mb: int = 0  # OVMF 64-bit MMIO window; needed when the GPUs' BARs exceed OVMF's default (8xB300: 2048000)
 
 
 class LaunchCommand(BaseModel):
