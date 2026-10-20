@@ -90,11 +90,12 @@ async def q4_dcgm(ctx: Ctx, level: int = 3) -> CheckResult:
         d = P.parse_dcgm_diag(r.stdout)
     except ValueError:
         return CheckResult(id="Q4", name="DCGM diagnostics", passed=False, error="unparseable dcgmi output", details={"stderr": r.stderr[:300]})
-    mandatory = {"Memory", "PCIe", "Targeted Stress", "Memory Bandwidth", "Diagnostic"} if level >= 3 else ({"Memory", "PCIe"} if level == 2 else set())
-    missing = sorted(m for m in mandatory if m not in d["ran"])
+    default_mandatory = {"memory", "pcie", "targetedstress", "memorybandwidth", "diagnostic"} if level >= 3 else ({"memory", "pcie"} if level == 2 else set())
+    mandatory = set(ctx.profile.extra["dcgm_mandatory"]) if "dcgm_mandatory" in ctx.profile.extra else default_mandatory
+    missing = sorted(m for m in mandatory if not any(m in name for name in d["ran"]))  # e.g. "memory" matches "gpumemory"
     ok = not d["failed"] and not missing
     return CheckResult(id="Q4", name="DCGM diagnostics", passed=ok, skipped=bool(missing) and not d["failed"],
-                       details={"failed": d["failed"], "skipped": d["skipped"], "missing_mandatory": missing, "ran": len(d["ran"])})
+                       details={"failed": d["failed"], "skipped": d["skipped"], "missing_mandatory": missing, "ran": sorted(d["ran"]), "level": level})
 
 
 async def q5_topology(ctx: Ctx) -> CheckResult:
@@ -159,14 +160,23 @@ async def q10_ram(ctx: Ctx) -> CheckResult:
 
 async def q11_nvme(ctx: Ctx, sustained: bool = True) -> CheckResult:
     lb = P.parse_lsblk_json((await ctx.runner.run("lsblk -J -b -o NAME,SIZE,TYPE,MOUNTPOINT")).stdout)
-    cmd = (f"mkdir -p {ctx.profile.fio_dir} && fio --output-format=json --directory={ctx.profile.fio_dir} --size=8G --direct=1 --ioengine=libaio "
+    d = ctx.profile.fio_dir
+    size = int(ctx.profile.extra.get("fio_size_gb", 8))
+    jobs = int(ctx.profile.extra.get("fio_numjobs", 8))
+    cmd = (f"mkdir -p {d} 2>/dev/null; test -w {d} || sudo -n chown $(id -u) {d}; rm -f {d}/*.0.* 2>/dev/null; "
+           # global --stonewall runs the sections one after another, each in its own group, so group_reporting aggregates only a section's numjobs
+           f"fio --output-format=json --unlink=1 --stonewall --group_reporting --directory={d} --size={size}G --direct=1 --ioengine=libaio "
            "--name=seqread --rw=read --bs=1M --iodepth=32 --runtime=60 --time_based "
            "--name=seqwrite --rw=write --bs=1M --iodepth=32 --runtime=60 --time_based "
-           "--name=randread --rw=randread --bs=4k --iodepth=32 --numjobs=8 --group_reporting --runtime=60 --time_based "
-           "--name=randwrite --rw=randwrite --bs=4k --iodepth=32 --numjobs=8 --group_reporting --runtime=60 --time_based")
+           f"--name=randread --rw=randread --bs=4k --iodepth=32 --numjobs={jobs} --runtime=60 --time_based "
+           f"--name=randwrite --rw=randwrite --bs=4k --iodepth=32 --numjobs={jobs} --runtime=60 --time_based")
     if sustained:
         cmd += f" --name=sustained --rw=write --bs=1M --iodepth=32 --runtime={int(ctx.profile.extra.get('fio_sustained_s', 600))} --time_based"
-    f = P.parse_fio_json((await ctx.runner.run(cmd, timeout=3600)).stdout)
+    fr = await ctx.runner.run(cmd, timeout=3600)
+    try:
+        f = P.parse_fio_json(fr.stdout)
+    except ValueError:
+        return CheckResult(id="Q11", name="NVMe", passed=False, error="fio produced no JSON", details={"stderr": fr.stderr[-300:], "rc": fr.rc})
     data_tb = sum(d["size_bytes"] for d in lb["devices"] if d["mountpoint"] == ctx.profile.fio_dir) / 1e12
     if data_tb == 0:  # no dedicated data mount (dev profiles): use the largest block device
         data_tb = max((d["size_bytes"] for d in lb["devices"] if d["type"] in ("disk", "crypt")), default=0) / 1e12
@@ -176,7 +186,10 @@ async def q11_nvme(ctx: Ctx, sustained: bool = True) -> CheckResult:
         vals["nvme.sustained_write_gbps"] = f.get("sustained", {}).get("write_bw_gbps", 0)
     ctx.measured.update(vals)
     ok = all(v >= ctx.ref(k) * ctx.floor for k, v in vals.items())
-    return CheckResult(id="Q11", name="NVMe", passed=ok, details={k: round(v, 2) for k, v in vals.items()})
+    details = {k: round(v, 2) for k, v in vals.items()}
+    if not ok:
+        details["stderr"] = fr.stderr[-300:]
+    return CheckResult(id="Q11", name="NVMe", passed=ok, details=details)
 
 
 async def q12_network(ctx: Ctx, endpoints: list[str] | None = None, seconds: int = 60) -> CheckResult:
@@ -196,9 +209,12 @@ async def q12_network(ctx: Ctx, endpoints: list[str] | None = None, seconds: int
 
 async def q13_power(ctx: Ctx, minutes: int | None = None) -> CheckResult:
     minutes = minutes or int(ctx.profile.extra.get("power_minutes", 20))
-    cmd = (f"(sudo docker run -d --rm --name b300load --gpus all racksdock/train-bench:pinned --minutes {minutes} >/dev/null 2>&1 || true); "
-           f"nvidia-smi --query-gpu=index,power.limit,clocks_throttle_reasons.active,clocks.sm --format=csv,noheader,nounits -l 10 -c {minutes * 6}")
-    s = P.parse_power_samples((await ctx.runner.run(cmd, timeout=minutes * 60 + 120)).stdout)
+    load = f"(sudo -n docker run -d --rm --name racksdockload --gpus all racksdock/train-bench:pinned --minutes {minutes} >/dev/null 2>&1 || true); "
+    # one sample every 10 s: CSV power limit + SM clock per GPU, then the PERFORMANCE section for throttle state (field names differ across drivers)
+    sample = ("nvidia-smi --query-gpu=index,power.limit,clocks.sm --format=csv,noheader,nounits; nvidia-smi -q -d PERFORMANCE; echo ---SAMPLE---")
+    r = await ctx.runner.run(load + f"for i in $(seq {minutes * 6}); do {sample}; sleep 10; done", timeout=minutes * 60 + 120)
+    out, stderr = r.stdout, r.stderr
+    s = P.parse_power_samples(out)
     if ctx.profile.production:
         approved = specdata.allowlist()["power_profile"].get("sim_gpu_power_limit_w" if ctx.dev_mode else "gpu_power_limit_w") or ctx.ref("power_profile.limit_w")
     else:
@@ -206,7 +222,10 @@ async def q13_power(ctx: Ctx, minutes: int | None = None) -> CheckResult:
     ok = s["min_limit_w"] >= approved - 1 and s["throttled_samples"] == 0 and s["samples"] > 0
     ctx.measured["power_profile.limit_w"] = s["min_limit_w"]
     ctx.extra["power_approved"] = ok
-    return CheckResult(id="Q13", name="Power and clock profile", passed=ok, details={"min_limit_w": s["min_limit_w"], "approved_w": approved, "throttled_samples": s["throttled_samples"], "samples": s["samples"]})
+    details = {"min_limit_w": s["min_limit_w"], "approved_w": approved, "throttled_samples": s["throttled_samples"], "samples": s["samples"]}
+    if not ok:
+        details["output_head"] = (out or stderr)[:200]
+    return CheckResult(id="Q13", name="Power and clock profile", passed=ok, details=details)
 
 
 async def q14_training(ctx: Ctx, minutes: int = 15) -> CheckResult:
@@ -260,8 +279,10 @@ async def smoke(ctx: Ctx) -> dict[str, Any]:
         n = P.parse_nccl_tests((await ctx.runner.run(f"all_reduce_perf -b 1G -e 1G -g {ctx.profile.nccl_gpus} -c 1", timeout=600)).stdout)
     else:
         n = {"busbw_1gb": None, "wrong": 0}
-    f = P.parse_fio_json((await ctx.runner.run(f"mkdir -p {ctx.profile.fio_dir} && fio --output-format=json --directory={ctx.profile.fio_dir} --size=2G --direct=1 --ioengine=libaio --name=seqwrite --rw=write --bs=1M --iodepth=32 --runtime=30 --time_based", timeout=120)).stdout)
-    ip = P.parse_iperf3_json((await ctx.runner.run("iperf3 -J -c iperf.racksdock-validator.local -t 10 -P 4 -R", timeout=60)).stdout)
+    sd = ctx.profile.fio_dir
+    f = P.parse_fio_json((await ctx.runner.run(f"mkdir -p {sd} 2>/dev/null; test -w {sd} || sudo -n chown $(id -u) {sd}; rm -f {sd}/*.0.* 2>/dev/null; fio --output-format=json --unlink=1 --directory={sd} --size={min(2, int(ctx.profile.extra.get('fio_size_gb', 8)))}G --direct=1 --ioengine=libaio --name=seqwrite --rw=write --bs=1M --iodepth=32 --runtime=30 --time_based", timeout=120)).stdout)
+    ep = (ctx.extra.get("iperf_endpoints") or ["iperf.racksdock-validator.local"])[0]
+    ip = P.parse_iperf3_json((await ctx.runner.run(f"iperf3 -J -c {ep} -t 10 -P 4 -R", timeout=60)).stdout)
     marker = P.parse_kv_lines((await ctx.runner.run("racksdock-marker check")).stdout)
     mem = P.parse_kv_lines((await ctx.runner.run("racksdock-memtest --quick")).stdout)
     return {"allreduce_1gb_busbw_gbps": n["busbw_1gb"], "nccl_wrong": n["wrong"], "fio_seq_write_gbps": f.get("seqwrite", {}).get("write_bw_gbps"),

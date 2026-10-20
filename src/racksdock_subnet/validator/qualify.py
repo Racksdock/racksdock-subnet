@@ -96,7 +96,8 @@ def spec_from_measured(m: dict[str, float], extra: dict) -> SpecMeasured:
         return float(m.get(k, 0.0))
 
     return SpecMeasured(
-        gpu=GpuSpecMeasured(vram_gb_usable_min=g("gpu.vram_gb_usable_min"), board_part=extra.get("gpu_board_part", ""), vbios=extra.get("gpu_vbios", ""), pci_device_id=extra.get("gpu_pci_id", "")),
+        gpu=GpuSpecMeasured(model=current_profile().gpu_model, count=current_profile().gpu_count, vram_gb_usable_min=g("gpu.vram_gb_usable_min"), board_part=extra.get("gpu_board_part", ""),
+                            vbios=extra.get("gpu_vbios", ""), pci_device_id=extra.get("gpu_pci_id", "")),
         nvlink=NvlinkMeasured(d2d_gbps_min_pair=g("nvlink.d2d_gbps_min_pair"), d2d_gbps_aggregate=g("nvlink.d2d_gbps_aggregate"), allreduce_1gb_busbw_gbps=g("nvlink.allreduce_1gb_busbw_gbps")),
         cpu=CpuMeasured(model=extra.get("cpu_model", ""), vcpus=int(m.get("cpu.vcpus", 0)), stream_gbps=g("cpu.stream_gbps"), sysbench=g("cpu.sysbench")),
         memory_gb=g("memory_gb"), hbm_write_gbps=g("hbm_write_gbps"),

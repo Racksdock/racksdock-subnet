@@ -108,6 +108,8 @@
   "extra": {
     "power_minutes": 3,
     "fio_sustained_s": 120,
-    "sysbench_s": 60
+    "sysbench_s": 60,
+    "fio_size_gb": 1,
+    "fio_numjobs": 2
   }
 }

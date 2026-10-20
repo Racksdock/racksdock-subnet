@@ -249,8 +249,8 @@ class NvattestVerifier:
         return res
 
 
-def build_verifier(cfg) -> Verifier:
-    """Factory from TrustConfig."""
+def build_verifier(cfg, expected_devices: int | None = None) -> Verifier:
+    """Factory from TrustConfig. expected_devices defaults to the active profile's gpu_count."""
     if cfg.dev:
         if cfg.dev_ca_dir is None:
             raise RuntimeError("RACKSDOCK_DEV_CA_DIR is required in dev trust mode")
@@ -260,8 +260,8 @@ def build_verifier(cfg) -> Verifier:
         if missing:
             raise RuntimeError(f"dev CA incomplete in {cfg.dev_ca_dir} (missing {', '.join(missing)}): copy root.pem, device_ca.pem and rim.json "
                                f"from the node's /etc/racksdock/devca, or create one with `racksdock-verify devca init {cfg.dev_ca_dir}`")
-        return SimVerifier(DevCA(cfg.dev_ca_dir))
-    return NvattestVerifier(binary=cfg.nvattest_bin, remote=cfg.nras_url is not None, nras_url=cfg.nras_url, rim_url=cfg.rim_url)
+        return SimVerifier(DevCA(cfg.dev_ca_dir), expected_devices=expected_devices)
+    return NvattestVerifier(binary=cfg.nvattest_bin, remote=cfg.nras_url is not None, nras_url=cfg.nras_url, rim_url=cfg.rim_url, expected_devices=expected_devices)
 
 
 def build_collector(cfg, node_dir: str | Path | None = None):

@@ -51,7 +51,9 @@ async def run_canary(cfg, platform: PlatformClient, sessions: Sessions, node: di
     try:
         runner = sessions.runner(sess)
         try:
-            metrics = await smoke(Ctx(runner=runner, reference=cfg.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=0))
+            ctx = Ctx(runner=runner, reference=cfg.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=0)
+            ctx.extra["iperf_endpoints"] = list(cfg.iperf_endpoints)
+            metrics = await smoke(ctx)
         finally:
             await runner.close()
     finally:

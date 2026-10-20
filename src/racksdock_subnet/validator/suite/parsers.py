@@ -40,14 +40,18 @@ def parse_topo(out: str, expected_gpus: int = 8) -> dict[str, Any]:
     return {"gpus": gpus, "nvlink_pairs": nv_pairs, "non_nvlink_pairs": other, "full_nvlink": full}
 
 
+def norm_name(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
 def parse_dcgm_diag(out: str) -> dict[str, Any]:
-    """dcgmi diag -j output. Permissive across DCGM 3.x/4.x shapes."""
+    """dcgmi diag -j output. Permissive across DCGM 3.x/4.x shapes; test names are normalized (lowercase, alphanumeric)."""
     data = json.loads(out)
     root = data.get("DCGM GPU Diagnostic") or data.get("DCGM Diagnostic") or data
     tests: dict[str, dict[str, str]] = {}
     for cat in root.get("test_categories", []):
         for t in cat.get("tests", []):
-            name = t.get("name", "?")
+            name = norm_name(str(t.get("name", "?")))
             per_gpu: dict[str, str] = {}
             for r in t.get("results", []):
                 status = str(r.get("status", "")).lower()
@@ -184,20 +188,36 @@ def parse_kv_lines(out: str) -> dict[str, str]:
     return res
 
 
+THROTTLE_KEYS = ("sw power cap", "hw slowdown", "hw thermal slowdown", "hw power brake slowdown", "sw thermal slowdown")
+
+
 def parse_power_samples(out: str) -> dict[str, Any]:
-    """Samples of: nvidia-smi --query-gpu=index,power.limit,clocks_throttle_reasons.active,clocks.sm --format=csv,noheader,nounits"""
+    """Repeated samples of
+         nvidia-smi --query-gpu=index,power.limit,clocks.sm --format=csv,noheader,nounits   (3 columns; a legacy 4th throttle-bitmask column is accepted)
+         nvidia-smi -q -d PERFORMANCE                                                       ('<reason> : Active' lines mark throttling)
+    """
     limits: dict[int, float] = {}
     throttled = 0
     samples = 0
-    for line in out.splitlines():
+    throttled_in_block = False
+    for raw in out.splitlines():
+        line = raw.strip()
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 4 or not parts[0].isdigit():
+        if len(parts) >= 3 and parts[0].isdigit() and parts[1].replace(".", "", 1).replace("[N/A]", "").isdigit():
+            samples += 1
+            limits[int(parts[0])] = float(parts[1])
+            if len(parts) >= 4 and parts[2].startswith("0x") and int(parts[2], 16) & (0x4 | 0x8 | 0x20 | 0x40 | 0x80):
+                throttled += 1
             continue
-        samples += 1
-        idx = int(parts[0])
-        limits[idx] = float(parts[1])
-        reasons = int(parts[2], 16) if parts[2].startswith("0x") else int(parts[2] or "0")
-        # HW slowdown 0x8, SW thermal 0x20, HW thermal 0x40, HW power brake 0x80, SW power cap 0x4
-        if reasons & (0x4 | 0x8 | 0x20 | 0x40 | 0x80):
-            throttled += 1
+        low = line.lower()
+        if ":" in low and any(low.startswith(k) for k in THROTTLE_KEYS):
+            state = low.split(":", 1)[1].strip()
+            if state == "active":
+                throttled_in_block = True
+        if line == "---SAMPLE---":
+            if throttled_in_block:
+                throttled += 1
+            throttled_in_block = False
+    if throttled_in_block:
+        throttled += 1
     return {"limits_w": limits, "min_limit_w": min(limits.values()) if limits else 0.0, "throttled_samples": throttled, "samples": samples}

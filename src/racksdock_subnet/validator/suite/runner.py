@@ -34,7 +34,9 @@ class SSHRunner:
         import asyncssh
 
         if self._conn is None:
-            kh = asyncssh.import_known_hosts(f"[{self.host}]:{self.port} {self.host_key_line}\n")
+            # OpenSSH known_hosts: bare host for port 22, "[host]:port" otherwise; pin both forms
+            key = " ".join(self.host_key_line.split()[:2])
+            kh = asyncssh.import_known_hosts(f"{self.host} {key}\n[{self.host}]:{self.port} {key}\n")
             self._conn = await asyncssh.connect(self.host, port=self.port, username=self.username, client_keys=[self.client_key_path], known_hosts=kh, connect_timeout=30)
         return self._conn
 
@@ -195,12 +197,18 @@ class SimRunner:
             down, up = p.ref("network.down_gbps") * p.s("network.down_gbps"), p.ref("network.up_gbps") * p.s("network.up_gbps")
             rev = "-R" in cmd
             return CmdResult(0, json.dumps({"end": {"sum_sent": {"bits_per_second": (down if rev else up) * 1e9}, "sum_received": {"bits_per_second": (down if rev else up) * 1e9 * 0.995}, "sum": {"lost_percent": 0.0}}}))
-        if "clocks_throttle_reasons.active" in cmd:
+        if "-d PERFORMANCE" in cmd or "clocks_throttle_reasons.active" in cmd or "clocks_event_reasons.active" in cmd:
             lines = []
             for s_ in range(6):
                 for i in range(n):
-                    reasons = "0x0000000000000008" if p.throttle and s_ > 2 else "0x0000000000000000"
-                    lines.append(f"{i}, {p.power_limit_w:.2f}, {reasons}, 1980")
+                    lines.append(f"{i}, {p.power_limit_w:.2f}, 1980")
+                for i in range(n):
+                    hot = p.throttle and s_ > 2
+                    lines += [f"GPU 0000:{17 + i:02x}:00.0", "    Clocks Event Reasons", "        Idle                              : Not Active",
+                              f"        SW Power Cap                      : {'Active' if hot else 'Not Active'}", "        HW Slowdown                       : Not Active",
+                              "            HW Thermal Slowdown           : Not Active", "            HW Power Brake Slowdown       : Not Active",
+                              "        SW Thermal Slowdown               : Not Active"]
+                lines.append("---SAMPLE---")
             return CmdResult(0, "\n".join(lines) + "\n")
         if "racksdock-train-bench" in cmd:
             return CmdResult(0, f"tokens_per_s: {self._jit(p.ref('training_tokens_per_s') * p.s('training_tokens_per_s')):.0f}\nstep_time_p50_ms: 410\nstep_time_p95_ms: 440\nloss_final: 2.31\n")

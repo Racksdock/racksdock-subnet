@@ -21,7 +21,7 @@ def test_parsers_on_simulated_real_formats():
     n = P.parse_nccl_tests(run(r.run("all_reduce_perf -b 1K -e 8G -f 2 -g 8 -c 1")).stdout)
     assert n["busbw_1gb"] and n["wrong"] == 0 and n["avg_busbw_gbps"] and 1073741824 in n["by_size"]
     d = P.parse_dcgm_diag(run(r.run("sudo dcgmi diag -r 3 -j")).stdout)
-    assert "Memory" in d["ran"] and not d["failed"]
+    assert "memory" in d["ran"] and not d["failed"]
     f = P.parse_fio_json(run(r.run("fio --output-format=json")).stdout)
     assert f["seqwrite"]["write_bw_gbps"] > 20 and f["randread"]["read_iops"] > 1e6
     i = P.parse_iperf3_json(run(r.run("iperf3 -J -c x -t 10 -R")).stdout)
@@ -30,8 +30,11 @@ def test_parsers_on_simulated_real_formats():
     assert P.parse_sysbench(run(r.run("sysbench cpu run")).stdout)["events_per_s"] > 100000
     t = P.parse_topo(run(r.run("nvidia-smi topo -m")).stdout)
     assert t["full_nvlink"] and t["nvlink_pairs"] == 56
-    pw = P.parse_power_samples(run(r.run("nvidia-smi --query-gpu=index,power.limit,clocks_throttle_reasons.active,clocks.sm --format=csv,noheader,nounits -l 10 -c 6")).stdout)
+    pw = P.parse_power_samples(run(r.run("for i in $(seq 6); do nvidia-smi --query-gpu=index,power.limit,clocks.sm --format=csv,noheader,nounits; nvidia-smi -q -d PERFORMANCE; echo ---SAMPLE---; sleep 10; done")).stdout)
     assert pw["min_limit_w"] == 1400 and pw["throttled_samples"] == 0 and pw["samples"] == 48
+    real_q = "0, 300.00, 1410\nGPU 00000000:00:05.0\n    Clocks Event Reasons\n        Idle                              : Not Active\n        SW Power Cap                      : Active\n        HW Slowdown                       : Not Active\n---SAMPLE---\n"
+    pq = P.parse_power_samples(real_q)
+    assert pq["samples"] == 1 and pq["min_limit_w"] == 300.0 and pq["throttled_samples"] == 1
     assert P.parse_lscpu(run(r.run("lscpu")).stdout)["cpus"] == 120
     assert P.parse_meminfo(run(r.run("cat /proc/meminfo")).stdout)["total_gb"] > 1800
     assert P.parse_lsblk_json(run(r.run("lsblk -J -b -o NAME,SIZE,TYPE,MOUNTPOINT")).stdout)["total_tb"] > 28
@@ -52,7 +55,7 @@ def test_real_world_format_samples():
     dcgm = json.dumps({"DCGM GPU Diagnostic": {"test_categories": [{"category": "Deployment", "tests": [{"name": "Denylist", "results": [{"gpu_ids": "0,1", "status": "Pass"}]}]},
                                                                    {"category": "Hardware", "tests": [{"name": "Memory", "results": [{"gpu_id": "0", "status": "Pass"}, {"gpu_id": "1", "status": "Fail", "warnings": ["x"]}]}]}]}})
     d = P.parse_dcgm_diag(dcgm)
-    assert d["failed"] == ["Memory"] and "Denylist" in d["ran"]
+    assert d["failed"] == ["memory"] and "denylist" in d["ran"]
     stream = "Function    Best Rate MB/s  Avg time     Min time     Max time\nCopy:          412345.6     0.0405       0.0391       0.0421\nTriad:         423456.7     0.0590       0.0570       0.0612\n"
     assert P.parse_stream(stream)["triad_gbps"] == pytest.approx(423.4567)
     pci = P.parse_nvidia_smi_csv("0, NVIDIA B300, 1650001234, 0x2B0010DE, 99.00.00.00.01, 278528, 1400.00\n", ["index", "name", "serial", "pci_device_id", "vbios", "memory_total_mib", "power_limit_w"])

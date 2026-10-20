@@ -96,6 +96,12 @@ class ValidatorNeuron:
             if n["status"] == "registered" and lease is None:
                 self._spawn(nid, self._admit_and_qualify(n))
                 continue
+            # quarantined: retry a full qualification after the retry interval (the miner may have fixed the node)
+            if n["status"] == "quarantined" and lease is None and now - self.last_requal.get(nid, 0) > self.cfg.retry_quarantined_s:
+                self.last_requal[nid] = now
+                self._save_state()
+                self._spawn(nid, self._requal_full(n))
+                continue
             if n["status"] == "qualified" and lease is None:
                 # readiness canary after a tenant rental
                 if n.get("needs_readiness"):
@@ -148,6 +154,10 @@ class ValidatorNeuron:
         if rec.outcome == "pass":
             self.last_requal[node["node_id"]] = time.time()
             self._save_state()
+
+    async def _requal_full(self, node: dict) -> None:
+        rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full")
+        log.info("retry of quarantined node %s -> %s %s", node["node_id"][:16], rec.outcome, rec.failing_checks)
 
     async def _requal(self, node: dict) -> None:
         rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="weekly")

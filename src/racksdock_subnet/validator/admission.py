@@ -60,6 +60,7 @@ async def admission_test(cfg, platform: PlatformClient, sessions: Sessions, node
         runner = sessions.runner(sess2)
         try:
             ctx = Ctx(runner=runner, reference=cfg.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=0)
+            ctx.extra["iperf_endpoints"] = list(cfg.iperf_endpoints)
             sm = await smoke(ctx)
             same_gpus = set(sess2.boot.gpu_ids) == set(sess.boot.gpu_ids) and sess2.boot.ok
             clean = sm.get("marker") == "absent" and sm.get("gpu_memory_verify") == "ok"
