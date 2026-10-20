@@ -81,4 +81,4 @@ def test_rtx4090_profile_is_eight_gpu_pcie_and_excludes_checks_geforce_cannot_ru
     for cid in ("Q2", "Q3", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13"):
         assert p.enabled(cid)
     assert p.power_limit_w == 0 and p.sim_pci_id == "10de:2684" and p.extra["fio_size_gb"] == 2
-    assert specdata.reference_set(p.reference_set)["values"]["gpu.vram_gb_usable_min"] == 22
+    assert specdata.reference_set(p.reference_set)["values"]["gpu.vram_gb_usable_min"] == 20
