@@ -517,3 +517,29 @@ def test_topology_failure_retry_reruns_failed_and_cut_off_checks_only():
     planned = ["Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13", "Q14", "Q15"]
     assert plan_targeted_retry(last, planned) == {"Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13", "Q14", "Q15"}
     assert plan_targeted_retry({**last, "failing_checks": ["Q2"]}, planned) is None  # identity/SKU: full rerun
+    # a power-profile failure resumes at Q13: the workload checks after it run again too
+    all_ran = {**last, "failing_checks": ["Q13"], "checks": [{"id": i, "passed": i != "Q13"} for i in ["Q1"] + planned]}
+    assert plan_targeted_retry(all_ran, planned) == {"Q13", "Q14", "Q15"}
+
+
+def test_q13_uses_the_skus_own_power_limit_and_q14_without_benchmark_is_skipped():
+    import asyncio
+
+    from racksdock_subnet.core.profile import load as load_profile
+    from racksdock_subnet.validator.suite.checks import Ctx, q13_power, q14_training
+    from racksdock_subnet.validator.suite.runner import CmdResult
+
+    sample = "".join(f"{i}, 1100.00, 1980\n" for i in range(8)) + "Clocks Event Reasons\n    Idle : Not Active\n---SAMPLE---\n"
+
+    class R:
+        async def run(self, cmd, timeout=None):
+            if "train-bench" in cmd and "seq" in cmd:
+                return CmdResult(0, "LOAD=started\n" + sample * 3)
+            return CmdResult(125, "", "Unable to find image 'racksdock/train-bench:pinned'")
+
+    ctx = Ctx(runner=R(), reference="ref_dev_v0", dev_mode=True, claimed_vcpus=1, profile=load_profile("b300x8"))
+    ctx.extra["gpu_pci_id"] = "10de:3182"
+    r13 = asyncio.run(q13_power(ctx, minutes=1))
+    assert r13.details["approved_w"] == 1100.0 and r13.details["under_load"] is True
+    r14 = asyncio.run(q14_training(ctx, minutes=1))
+    assert r14.skipped and not r14.passed and "not available" in r14.error

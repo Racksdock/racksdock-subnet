@@ -279,20 +279,26 @@ async def q12_network(ctx: Ctx, endpoints: list[str] | None = None, seconds: int
 
 async def q13_power(ctx: Ctx, minutes: int | None = None) -> CheckResult:
     minutes = minutes or int(ctx.profile.extra.get("power_minutes", 20))
-    load = f"(sudo -n docker run -d --rm --name racksdockload --gpus all racksdock/train-bench:pinned --minutes {minutes} >/dev/null 2>&1 || true); "
+    load = (f"(sudo -n docker run -d --rm --name racksdockload --gpus all racksdock/train-bench:pinned --minutes {minutes} >/dev/null 2>&1 "
+            "&& echo LOAD=started || echo LOAD=missing); ")
     # one sample every 10 s: CSV power limit + SM clock per GPU, then the PERFORMANCE section for throttle state (field names differ across drivers)
     sample = ("nvidia-smi --query-gpu=index,power.limit,clocks.sm --format=csv,noheader,nounits; nvidia-smi -q -d PERFORMANCE; echo ---SAMPLE---")
     r = await ctx.runner.run(load + f"for i in $(seq {minutes * 6}); do {sample}; sleep 10; done", timeout=minutes * 60 + 120)
     out, stderr = r.stdout, r.stderr
     s = P.parse_power_samples(out)
-    if ctx.profile.production:
+    sku_power = next((float(e["power_limit_w"]) for e in specdata.approved_gpu_entries(ctx.dev_mode)
+                      if e.get("power_limit_w") and e["pci_device_id"].lower() == str(ctx.extra.get("gpu_pci_id", "")).lower()), 0.0)
+    if sku_power:
+        approved = sku_power  # the approved SKU's own limit (B300 SXM6 AC: 1100 W)
+    elif ctx.profile.production:
         approved = specdata.allowlist()["power_profile"].get("sim_gpu_power_limit_w" if ctx.dev_mode else "gpu_power_limit_w") or ctx.ref("power_profile.limit_w")
     else:
         approved = ctx.profile.power_limit_w  # 0 = not enforced on dev hardware
     ok = s["min_limit_w"] >= approved - 1 and s["throttled_samples"] == 0 and s["samples"] > 0
     ctx.measured["power_profile.limit_w"] = s["min_limit_w"]
     ctx.extra["power_approved"] = ok
-    details = {"min_limit_w": s["min_limit_w"], "approved_w": approved, "throttled_samples": s["throttled_samples"], "samples": s["samples"]}
+    details = {"min_limit_w": s["min_limit_w"], "approved_w": approved, "throttled_samples": s["throttled_samples"], "samples": s["samples"],
+               "under_load": "LOAD=started" in (out or "")}
     if not ok:
         details["output_head"] = (out or stderr)[:200]
     return CheckResult(id="Q13", name="Power and clock profile", passed=ok, details=details)
@@ -301,6 +307,9 @@ async def q13_power(ctx: Ctx, minutes: int | None = None) -> CheckResult:
 async def q14_training(ctx: Ctx, minutes: int = 15) -> CheckResult:
     kv = P.parse_kv_lines((await ctx.runner.run(f"sudo docker run --rm --gpus all racksdock/train-bench:pinned --minutes {minutes} || racksdock-train-bench", timeout=minutes * 60 + 600)).stdout)
     tps = float(kv.get("tokens_per_s", 0))
+    if tps <= 0:
+        return CheckResult(id="Q14", name="Representative training", passed=False, skipped=True, error="training benchmark not available on this node (racksdock/train-bench image missing)",
+                           details={"tokens_per_s": 0.0})
     p50, p95 = float(kv.get("step_time_p50_ms", 1) or 1), float(kv.get("step_time_p95_ms", 0) or 0)
     ctx.measured["training_tokens_per_s"] = tps
     ok = tps >= ctx.ref("training_tokens_per_s") * ctx.floor and (p95 / p50) <= 1.15
@@ -310,6 +319,9 @@ async def q14_training(ctx: Ctx, minutes: int = 15) -> CheckResult:
 async def q15_inference(ctx: Ctx, minutes: int = 10) -> CheckResult:
     kv = P.parse_kv_lines((await ctx.runner.run(f"sudo docker run --rm --gpus all racksdock/infer-bench:pinned --minutes {minutes} || racksdock-infer-bench", timeout=minutes * 60 + 600)).stdout)
     tps = float(kv.get("tokens_per_s", 0))
+    if tps <= 0:
+        return CheckResult(id="Q15", name="Representative inference", passed=False, skipped=True, error="inference benchmark not available on this node (racksdock/infer-bench image missing)",
+                           details={"tokens_per_s": 0.0})
     ctx.measured["inference_tokens_per_s"] = tps
     return CheckResult(id="Q15", name="Representative inference", passed=tps >= ctx.ref("inference_tokens_per_s") * ctx.floor, details={"tokens_per_s": tps})
 

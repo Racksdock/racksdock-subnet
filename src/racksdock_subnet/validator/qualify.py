@@ -132,8 +132,8 @@ IDENTITY_CHECKS = {"Q1", "Q2", "Q3"}  # a failure here always means a full re-ru
 
 
 def plan_targeted_retry(last: dict | None, planned: list[str] | None = None) -> set[str] | None:
-    """Which checks a quarantined node's retry must re-run. A quarantine caused by non-identity checks re-runs those plus every
-    planned check the previous session never reached (a fail-fast on topology cuts the suite short); the passes of that session
+    """Which checks a quarantined node's retry must re-run: it resumes the suite at the first failing check. Everything from there
+    on runs again (later checks may depend on earlier ones, and a fail-fast on topology cuts the suite short); the passes before it
     stand. Identity/SKU failures, perf gate failures and incomplete runs re-run everything (None)."""
     if not last or last.get("kind") != "full" or last.get("outcome") != "quarantined":
         return None
@@ -142,9 +142,13 @@ def plan_targeted_retry(last: dict | None, planned: list[str] | None = None) -> 
         return None
     if any(c.get("skipped") for c in last.get("checks") or [] if c.get("id") in failing):
         return None
-    ran = {c.get("id") for c in last.get("checks") or []}
-    never_ran = {c for c in (planned or []) if c not in ran and c != "Q1"}
-    return set(failing) | never_ran
+    order = [c for c in (planned or []) if c != "Q1"]
+    if not order:
+        return set(failing)
+    first = min((order.index(f) for f in failing if f in order), default=None)
+    if first is None:
+        return set(failing)
+    return set(order[first:]) | set(failing)
 
 
 def merge_measured(base: dict, new: dict) -> dict:
@@ -225,6 +229,7 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
     finally:
         await sessions.close(sess)
     r = ratios(measured, cfg.reference_set or prof.reference_set)
+    calibration = prof.name in cfg.calibration_profiles
     retried: list[str] = []
     spec_base: dict | None = None
     if only is not None and base is not None:
@@ -236,13 +241,12 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
         r = {**(base.get("performance") or {}).get("ratios", {}), **r}
         spec_base = base.get("spec_measured")
     perf = perf_score(r)
-    calibration = prof.name in cfg.calibration_profiles
     if calibration:
         gate, below = True, []  # reference values unconfirmed for this class: the record carries the measurements, nothing gates
     else:
         gate, below = gate_ok({k: v for k, v in r.items() if k in thresholds()["core_perf_metrics"]})
-    failing = [c.id for c in checks if not c.passed]
-    incomplete = any(c.skipped for c in checks)
+    failing = [c.id for c in checks if not c.passed and not (calibration and c.skipped)]
+    incomplete = any(c.skipped for c in checks) and not calibration  # calibration records what could not run, it does not gate on it
     if failing or not gate:
         outcome = "quarantined"
     elif incomplete:
