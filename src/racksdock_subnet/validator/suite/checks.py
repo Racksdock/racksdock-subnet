@@ -126,6 +126,8 @@ def _parse_dcgm(r) -> dict | None:
 async def q5_topology(ctx: Ctx) -> CheckResult:
     r = await ctx.runner.run("nvidia-smi topo -m")
     t = P.parse_topo(r.stdout, expected_gpus=ctx.gpu_count)
+    if not t["full_nvlink"]:
+        t["matrix"] = r.stdout[:2500]  # what the node printed, so a parser or fabric problem can be told apart from the record
     return CheckResult(id="Q5", name="NVLink/NVSwitch topology", passed=bool(t["full_nvlink"]), details=t)
 
 
