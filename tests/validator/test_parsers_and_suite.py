@@ -102,3 +102,12 @@ def test_topo_counts_only_gpu_columns():
     # a PCIe-only box (the 8x4090) is still not fully NVLinked
     rows_pcie = [f"GPU{i}    " + "  ".join("X" if j == i else "SYS" for j in range(8)) + "  0-127  0  N/A\n" for i in range(8)]
     assert P.parse_topo(header + "".join(rows_pcie), expected_gpus=8)["full_nvlink"] is False
+
+
+def test_topo_real_b300_hgx_output_with_ansi_header():
+    """The first real B300 printed an ANSI-underlined header and five NIC columns: 56 NVLink pairs, nothing else."""
+    from pathlib import Path
+
+    out = (Path(__file__).parent / "fixtures" / "topo_b300_hgx.txt").read_text()
+    assert "\x1b[4m" in out
+    assert P.parse_topo(out, expected_gpus=8) == {"gpus": 8, "nvlink_pairs": 56, "non_nvlink_pairs": 0, "full_nvlink": True}

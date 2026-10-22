@@ -128,12 +128,13 @@ def spec_from_measured(m: dict[str, float], extra: dict, prof: Profile | None = 
     )
 
 
-IDENTITY_CHECKS = {"Q1", "Q2", "Q3", "Q5"}  # a failure here always means a full re-run (docs/03 §4)
+IDENTITY_CHECKS = {"Q1", "Q2", "Q3"}  # a failure here always means a full re-run (docs/03 §4)
 
 
-def plan_targeted_retry(last: dict | None) -> set[str] | None:
-    """Which checks a quarantined node's retry must re-run. A quarantine caused only by environment checks (network, disk, CPU,
-    power, ...) re-runs just those; identity/GPU failures, perf gate failures and incomplete runs re-run everything (None)."""
+def plan_targeted_retry(last: dict | None, planned: list[str] | None = None) -> set[str] | None:
+    """Which checks a quarantined node's retry must re-run. A quarantine caused by non-identity checks re-runs those plus every
+    planned check the previous session never reached (a fail-fast on topology cuts the suite short); the passes of that session
+    stand. Identity/SKU failures, perf gate failures and incomplete runs re-run everything (None)."""
     if not last or last.get("kind") != "full" or last.get("outcome") != "quarantined":
         return None
     failing = list(last.get("failing_checks") or [])
@@ -141,7 +142,9 @@ def plan_targeted_retry(last: dict | None) -> set[str] | None:
         return None
     if any(c.get("skipped") for c in last.get("checks") or [] if c.get("id") in failing):
         return None
-    return set(failing)
+    ran = {c.get("id") for c in last.get("checks") or []}
+    never_ran = {c for c in (planned or []) if c not in ran and c != "Q1"}
+    return set(failing) | never_ran
 
 
 def merge_measured(base: dict, new: dict) -> dict:

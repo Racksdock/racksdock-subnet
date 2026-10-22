@@ -507,3 +507,13 @@ def test_calibration_profile_disables_ratio_floors(monkeypatch):
     assert cfg.calibration_profiles == ("b300x8", "gb200x8")
     assert Ctx(runner=None, reference="ref_dev_v0", dev_mode=True, claimed_vcpus=1).floor == 0.9
     assert Ctx(runner=None, reference="ref_dev_v0", dev_mode=True, claimed_vcpus=1, calibration=True).floor == 0.0
+
+
+def test_topology_failure_retry_reruns_failed_and_cut_off_checks_only():
+    from racksdock_subnet.validator.qualify import plan_targeted_retry
+
+    last = {"kind": "full", "outcome": "quarantined", "failing_checks": ["Q5"],
+            "checks": [{"id": i, "passed": i != "Q5"} for i in ("Q1", "Q2", "Q3", "Q4", "Q5")]}
+    planned = ["Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13", "Q14", "Q15"]
+    assert plan_targeted_retry(last, planned) == {"Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13", "Q14", "Q15"}
+    assert plan_targeted_retry({**last, "failing_checks": ["Q2"]}, planned) is None  # identity/SKU: full rerun

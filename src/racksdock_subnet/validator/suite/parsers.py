@@ -21,28 +21,26 @@ def parse_board_parts(nvidia_smi_q: str) -> list[str]:
 
 def parse_topo(out: str, expected_gpus: int = 8) -> dict[str, Any]:
     """nvidia-smi topo -m: count NVLink (NVxx) pairs among GPUs. Only the GPU columns count: an HGX lists its NICs in the same
-    matrix (mlx5_*, NIC0 ...) and those cells are PIX/NODE/SYS by nature (seen on the first real B300: 40 NIC cells read as
-    'non-NVLink pairs' and failed a fully NVLinked node)."""
-    gpus = 0
-    nv_pairs = 0
-    other = 0
+    matrix (NIC0 ...) and those cells are PIX/NODE/SYS by nature. nvidia-smi may underline the header with ANSI escapes
+    (seen on the first real B300: '\\x1b[4mGPU0 ... GPU NUMA ID\\x1b[0m'), so escapes are stripped first."""
+    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", out)
+    lines = [ln for ln in out.splitlines() if ln.strip()]
     gpu_cols: list[int] | None = None
-    for line in out.splitlines():
-        cells = line.split()
-        if not cells:
-            continue
-        if gpu_cols is None and cells[0].startswith("GPU") and not line.startswith("GPU"):
-            # header: "        GPU0  GPU1 ... NIC0 ... CPU Affinity ..." -> positions of the GPU columns
-            gpu_cols = [i for i, c in enumerate(cells) if c.startswith("GPU")]
-            continue
-        if not line.startswith("GPU") or len(cells) < 2:
-            continue
-        gpus += 1
-        cols = gpu_cols if gpu_cols else list(range(len(cells) - 1))
-        for i in cols:
-            if i + 1 >= len(cells):
+    for ln in lines:
+        cells = ln.split()
+        if not re.fullmatch(r"GPU\d+", cells[0] if cells else "") or ln.lstrip() != ln:
+            # the header row is the one whose first cell is GPU0 but that is indented (rows start at column 0 with their label)
+            if cells and re.fullmatch(r"GPU\d+", cells[0]) and gpu_cols is None:
+                gpu_cols = [k for k, c in enumerate(cells) if re.fullmatch(r"GPU\d+", c)]
+    rows = [ln.split() for ln in lines if ln.lstrip() == ln and re.match(r"GPU\d+\s", ln)]
+    gpus = len(rows)
+    cols = gpu_cols if gpu_cols else list(range(gpus))
+    nv_pairs = other = 0
+    for cells in rows:
+        for k in cols:
+            if k + 1 >= len(cells):
                 continue
-            cell = cells[i + 1]
+            cell = cells[k + 1]
             if cell == "X":
                 continue
             if cell.startswith("NV"):
@@ -51,7 +49,6 @@ def parse_topo(out: str, expected_gpus: int = 8) -> dict[str, Any]:
                 other += 1
     full = gpus == expected_gpus and other == 0 and nv_pairs == expected_gpus * (expected_gpus - 1)
     return {"gpus": gpus, "nvlink_pairs": nv_pairs, "non_nvlink_pairs": other, "full_nvlink": full}
-
 
 def norm_name(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())

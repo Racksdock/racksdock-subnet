@@ -175,7 +175,15 @@ class Verifier:
             base = fulls[-1] if fulls else None
         except Exception as e:
             log.warning("could not fetch the last qualification of %s: %s", node["node_id"][:16], e)
-        only = plan_targeted_retry(base)
+        from racksdock_subnet.core.profile import load as load_profile
+
+        from .suite.checks import planned_checks
+
+        try:
+            planned = planned_checks(load_profile(node.get("profile") or (node.get("registration") or {}).get("profile") or "b300x8"), "full")
+        except Exception:
+            planned = None
+        only = plan_targeted_retry(base, planned)
         if only:
             log.info("retry of quarantined node %s: re-running only %s", node["node_id"][:16], sorted(only))
         rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full", only=only, base=base if only else None)
