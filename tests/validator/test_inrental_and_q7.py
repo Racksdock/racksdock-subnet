@@ -195,16 +195,16 @@ def test_validators_score_a_snapshot_deterministically(tmp_path):
                "utilization_7d": 1.0, "previously_funded": ["sha256:n2"], "inputs": [inp, inp2]}
     r1, r2 = score_snapshot(payload), score_snapshot(payload)
     assert r1.hotkey_weights == r2.hotkey_weights and r1.funded == r2.funded
-    # the container node scores at half (S 0.5 vs 1.0); with only two miners the 25% per-hotkey soft cap binds both and the rest burns
+    # the container node scores at half (S 0.5 vs 1.0); weights are proportional, no cap, nothing burns while miners are funded
     assert r1.scores["sha256:n1"] == 1.0 and r1.scores["sha256:n2"] == 0.5
-    assert r1.hotkey_weights["5Fm1"] == r1.hotkey_weights["5Fm2"] == 0.25 and abs(r1.burn - 0.5) < 1e-9
+    assert abs(r1.hotkey_weights["5Fm1"] - 2 / 3) < 1e-6 and abs(r1.hotkey_weights["5Fm2"] - 1 / 3) < 1e-6 and r1.burn == 0.0
     chain = build_chain("mock", path=tmp_path / "chain.json", netuid=1, network="x")
     chain.register("5GvalLight", is_validator=True)
     chain.register("5Fm1")
     chain.register("5Fm2")
     w = set_weights(chain, "5GvalLight", r1)
     uid = {n.hotkey: n.uid for n in chain.neurons()}
-    assert abs(sum(w.values()) - 1.0) < 1e-6 and w[uid["5Fm1"]] == w[uid["5Fm2"]] == 0.25 and w[0] == 0.5  # uid 0 = burn
+    assert abs(sum(w.values()) - 1.0) < 1e-6 and abs(w[uid["5Fm1"]] - 2 / 3) < 1e-6 and abs(w[uid["5Fm2"]] - 1 / 3) < 1e-6 and 0 not in w  # nothing to the burn uid
 
 
 def test_old_failed_in_rental_checks_do_not_gate_a_node_forever():
@@ -384,8 +384,8 @@ def test_no_attested_availability_pays_nothing_and_fresh_qualification_counts():
 
     res = score_tempo([ni("off", "hk2", 0.0, 0.0), ni("on", "hk3", 0.0, 21.0)], now, 21.0, Params(funded_slots=2))
     assert "off" not in res.funded and "no attested availability in the window" in res.details["off"]["gate_reasons"]  # takes no slot
-    # the single funded node is capped at 25 % of its slot's share and the empty second slot burns: 0.125 weight, 0.875 burn
-    assert res.scores["on"] > 0 and res.hotkey_weights.get("hk2", 0.0) == 0.0 and abs(res.hotkey_weights["hk3"] - 0.125) < 1e-6 and abs(res.burn - 0.875) < 1e-6
+    # the single funded node's hotkey gets everything: no cap, and nothing burns while a miner is funded
+    assert res.scores["on"] > 0 and res.hotkey_weights.get("hk2", 0.0) == 0.0 and abs(res.hotkey_weights["hk3"] - 1.0) < 1e-6 and res.burn == 0.0
     # freshly qualified, no canary yet: idle minutes count as available
     start, end = now - dt.timedelta(minutes=21), now
     base = {"node_id": "n1", "miner_hotkey": "hk", "status": "qualified", "qualified_at": "2026-10-22T04:50:00Z", "qualification": {"outcome": "pass"}, "perf": 1.0}

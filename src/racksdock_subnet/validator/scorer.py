@@ -17,7 +17,6 @@ class Params:
     w_r: float = 0.30
     perf_floor: float = 0.90
     qualification_validity_s: float = 7 * 86400
-    hotkey_cap: float = 0.25
     funded_slots: int = 64
     strike_decay_days: float = 30
     exclusion_strikes: float = 3.0
@@ -107,7 +106,8 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
         s = (w_a * a + w_p * pp + w_r * r) * tier
         res.scores[n.node_id] = round(s, 6)
         res.details[n.node_id].update({"A": round(a, 4), "P": round(pp, 4), "R": round(r, 4), "S": round(s, 6), "weights": [w_a, w_p, w_r], "tier": n.deployment, "tier_factor": tier})
-    # hotkey aggregation with soft cap and burn for unfilled slots
+    # hotkey aggregation: every funded node's score goes to its hotkey, weights are proportional, nothing is capped and nothing
+    # burns while at least one miner is funded; with no funded miner at all the whole miner emission goes to the burn uid
     by_hk: dict[str, float] = {}
     for n in funded:
         by_hk[n.hotkey] = by_hk.get(n.hotkey, 0.0) + res.scores[n.node_id]
@@ -115,6 +115,9 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
     if total <= 0:
         res.burn = 1.0
         return res
+    res.hotkey_weights = {hk: round(v / total, 8) for hk, v in by_hk.items()}
+    res.burn = 0.0
+    return res
     cap = p.hotkey_cap * total
     capped = {hk: min(v, cap) for hk, v in by_hk.items()}
     excess = total - sum(capped.values())

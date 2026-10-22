@@ -14,15 +14,15 @@ def node(nid, hk, rented, avail, perf=0.97, strikes=0.0, q=Q, outcome="pass", at
 
 
 def test_worked_examples_from_docs_04():
-    p = Params(funded_slots=10, hotkey_cap=1.0)  # cap not binding; see test_funded_slots_rank_and_hotkey_cap
+    p = Params(funded_slots=10)
     nodes = [node("rented", "hk1", 72, 0), node("idle", "hk2", 0, 72), node("refused", "hk3", 0, 42, failed=30), node("lost", "hk4", 52, 0)]
     r = score_tempo(nodes, NOW, 72, p)
     assert r.scores["rented"] == 0.94 and r.scores["idle"] == 0.64
     assert abs(r.scores["refused"] - (0.50 * 42 / 72 + 0.14)) < 1e-6
     assert abs(r.scores["lost"] - (0.50 * 52 / 72 + 0.14 + 0.30 * 52 / 72)) < 1e-6
     assert abs(sum(r.hotkey_weights.values()) + r.burn - 1.0) < 1e-6
-    # four nodes in ten slots -> 60% of emissions burn
-    assert abs(r.burn - 0.6) < 1e-6
+    # four nodes in ten slots: nothing burns while a miner is funded; weights are proportional to the hotkeys' scores
+    assert r.burn == 0.0 and abs(sum(r.hotkey_weights.values()) - 1.0) < 1e-6
 
 
 def test_gate_closes_for_stale_qualification_fault_perf_and_strikes():
@@ -35,14 +35,14 @@ def test_gate_closes_for_stale_qualification_fault_perf_and_strikes():
     assert "perf below floor" in r.details["slow"]["gate_reasons"]
 
 
-def test_funded_slots_rank_and_hotkey_cap():
-    p = Params(funded_slots=2, hotkey_cap=0.25)
+def test_funded_slots_rank_and_no_cap():
+    p = Params(funded_slots=2)
     nodes = [node("n1", "whale", 72, 0, strikes=0.0, block=1), node("n2", "whale", 72, 0, block=2), node("n3", "small", 0, 72, strikes=0.5, block=3)]
     r = score_tempo(nodes, NOW, 72, p)
     assert r.funded == ["n1", "n2"]  # fewer strikes rank first; small loses the slot
-    # single hotkey holds everything -> capped at 25%, rest burns
-    assert r.hotkey_weights["whale"] <= 0.25 + 1e-9 and r.burn >= 0.75 - 1e-9
-    p2 = Params(funded_slots=3, hotkey_cap=0.6)
+    # single hotkey holds everything -> it gets everything; no cap, no burn
+    assert abs(r.hotkey_weights["whale"] - 1.0) < 1e-9 and r.burn == 0.0
+    p2 = Params(funded_slots=3)
     r2 = score_tempo(nodes, NOW, 72, p2)
     assert set(r2.funded) == {"n1", "n2", "n3"}
     assert r2.hotkey_weights["whale"] > r2.hotkey_weights["small"]
