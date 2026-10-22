@@ -15,6 +15,7 @@ class ValidatorConfig:
     hotkey: str = "5Gvalidator"
     netuid: int = 1
     chain_kind: str = "mock"
+    role: str = "validator"  # validator: verify + score + set weights | verifier: verify only (the platform's own verifier; no wallet, no chain)
     chain_file: Path = Path("./chain.json")
     chain_network: str = "finney"
     wallet_name: str = "default"
@@ -48,7 +49,7 @@ class ValidatorConfig:
         c = cls(
             platform_url=e("RACKSDOCK_PLATFORM_URL", "http://127.0.0.1:8000"), api_key=e("RACKSDOCK_API_KEY"),
             state_dir=Path(e("RACKSDOCK_STATE_DIR", "~/.racksdock-validator")).expanduser(), hotkey=e("RACKSDOCK_HOTKEY", "5Gvalidator"),
-            netuid=int(e("RACKSDOCK_NETUID", "1")), chain_kind=e("RACKSDOCK_CHAIN", "mock"), chain_file=Path(e("RACKSDOCK_CHAIN_FILE", "./chain.json")),
+            netuid=int(e("RACKSDOCK_NETUID", "1")), chain_kind=e("RACKSDOCK_CHAIN", "mock"), role=e("RACKSDOCK_ROLE", "validator"), chain_file=Path(e("RACKSDOCK_CHAIN_FILE", "./chain.json")),
             chain_network=e("RACKSDOCK_CHAIN_NETWORK", "finney"), runner=e("RACKSDOCK_RUNNER", "ssh"), ssh_user=e("RACKSDOCK_SSH_USER", "ubuntu"),
             sim_profile=Path(e("RACKSDOCK_SIM_PROFILE")) if e("RACKSDOCK_SIM_PROFILE") else None, reference_set=e("RACKSDOCK_REFERENCE_SET", ""),
             iperf_endpoints=tuple(x.strip() for x in e("RACKSDOCK_IPERF_ENDPOINTS", "iperf.racksdock-validator.local").split(",") if x.strip()),

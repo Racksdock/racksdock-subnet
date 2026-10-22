@@ -402,3 +402,26 @@ def test_evidence_window_bounds_are_shared_and_deterministic():
 
     w = evidence_window(dt.datetime(2026, 10, 22, 9, 0, tzinfo=dt.UTC))
     assert w == {"canary": "2026-10-21T21:00:00Z", "inrental": "2026-10-21T21:00:00Z", "probe": "2026-10-22T09:00:00Z"}
+
+
+def test_verifier_role_never_builds_a_chain_or_scores(monkeypatch, tmp_path):
+    """RACKSDOCK_ROLE=verifier: the platform's verifier verifies and publishes but has no chain client and refuses to score."""
+    import asyncio
+
+    from racksdock_subnet.validator import neuron as vn
+    from racksdock_subnet.validator.config import ValidatorConfig
+    from racksdock_subnet.verifier.devca import DevCA
+
+    ca = DevCA.create(tmp_path / "ca")
+    monkeypatch.setenv("RACKSDOCK_ROLE", "verifier")
+    monkeypatch.setenv("RACKSDOCK_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("RACKSDOCK_RUNNER", "sim")
+    monkeypatch.setenv("RACKSDOCK_TRUST_MODE", "dev")
+    monkeypatch.setenv("RACKSDOCK_DEV_CA_DIR", str(ca.dir))
+    cfg = ValidatorConfig.from_env()
+    assert cfg.role == "verifier"
+    monkeypatch.setattr(vn, "build_chain", lambda *a, **k: (_ for _ in ()).throw(AssertionError("chain built for a verifier")))
+    n = vn.ValidatorNeuron(cfg)
+    assert n.chain is None
+    with pytest.raises(RuntimeError, match="never scores"):
+        asyncio.run(n.score_and_set_weights(None))

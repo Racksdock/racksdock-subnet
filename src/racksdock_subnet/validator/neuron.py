@@ -42,7 +42,8 @@ class ValidatorNeuron:
             fetch_devca(cfg.platform_url, cfg.trust.dev_ca_dir)  # the platform publishes the simulated root (NVIDIA's role in dev mode)
             log.warning("dev trust mode: fetched the simulated device CA from %s", cfg.platform_url)
         self.verifier = build_verifier(cfg.trust)
-        self.chain = build_chain(cfg.chain_kind, path=cfg.chain_file, netuid=cfg.netuid, network=cfg.chain_network, wallet_name=cfg.wallet_name, wallet_hotkey=cfg.wallet_hotkey, wallet_path=cfg.wallet_path)
+        # the platform's verifier (docs/03 §1): verifies nodes and publishes records, never scores or touches the chain
+        self.chain = None if cfg.role == "verifier" else build_chain(cfg.chain_kind, path=cfg.chain_file, netuid=cfg.netuid, network=cfg.chain_network, wallet_name=cfg.wallet_name, wallet_hotkey=cfg.wallet_hotkey, wallet_path=cfg.wallet_path)
         self.sessions = Sessions(cfg, self.platform, self.verifier, self.ssh_pub_line, str(self.ssh_key_path), poll_s=0.5 if cfg.runner == "sim" else 3.0)
         self.canaries = CanaryScheduler(cfg.canary_mean_interval_s)
         self.last_inrental: dict[str, float] = {}
@@ -76,10 +77,11 @@ class ValidatorNeuron:
                 k = await self.platform.enroll(self.cfg.hotkey)
                 key_file.write_text(k)
             self.cfg.api_key = self.platform.c.headers["X-API-KEY"]
-        try:
-            self.chain.register(self.cfg.hotkey, is_validator=True, stake=1.0)
-        except NotImplementedError:
-            pass
+        if self.chain is not None:
+            try:
+                self.chain.register(self.cfg.hotkey, is_validator=True, stake=1.0)
+            except NotImplementedError:
+                pass
 
     # ------------------------------------------------------------------ one iteration
     async def step(self, now: float | None = None) -> None:
@@ -129,7 +131,7 @@ class ValidatorNeuron:
                         self.last_microbench[iid] = now
                     approved = float(((n.get("qualification") or {}).get("spec_measured") or {}).get("power_profile", {}).get("limit_w") or 0)
                     asyncio.create_task(check_instance(self.cfg, self.platform, self.sessions.verifier_for(n), lease, n, micro, approved))  # the node's own GPU count
-        if now - self.tempo_start >= self.cfg.tempo_s:
+        if self.cfg.role != "verifier" and now - self.tempo_start >= self.cfg.tempo_s:
             self.tempo_start = now
             await self.score_and_set_weights(dt.datetime.now(dt.UTC))
 
@@ -183,6 +185,8 @@ class ValidatorNeuron:
 
     # ------------------------------------------------------------------ scoring
     async def score_and_set_weights(self, now: dt.datetime, tempo_s: float | None = None):
+        if self.chain is None:
+            raise RuntimeError("a verifier (RACKSDOCK_ROLE=verifier) never scores or sets weights; run `racksdock-validator light` for that")
         tempo_s = tempo_s or self.cfg.tempo_s
         window_start = now - dt.timedelta(seconds=tempo_s)
         nodes = await self.platform.nodes()
@@ -234,8 +238,8 @@ class ValidatorNeuron:
         from racksdock_subnet.core.profile import current as current_profile
 
         prof = current_profile()
-        log.info("validator started: key=%s hotkey=%s platform=%s profile=%s runner=%s trust=%s tempo=%ss canary_mean=%ss inrental=%ss",
-                 self.key.public.hex[:12], self.cfg.hotkey, self.cfg.platform_url, prof.name, self.cfg.runner, self.cfg.trust.mode,
+        log.info("%s started: key=%s hotkey=%s platform=%s profile=%s runner=%s trust=%s tempo=%ss canary_mean=%ss inrental=%ss",
+                 "verifier" if self.cfg.role == "verifier" else "validator", self.key.public.hex[:12], self.cfg.hotkey, self.cfg.platform_url, prof.name, self.cfg.runner, self.cfg.trust.mode,
                  int(self.cfg.tempo_s), int(self.cfg.canary_mean_interval_s), int(self.cfg.inrental_interval_s))
         last_status = 0.0
         while not self._stop.is_set():

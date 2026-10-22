@@ -52,6 +52,21 @@ def run():
 
 
 @app.command()
+def verify():
+    """Run the platform's verifier: admission tests, qualification suite, canaries and in-rental checks, publishing signed
+    records. No scoring, no weights, no wallet: validators run `racksdock-validator light` and score from the platform's snapshot."""
+    import os
+
+    os.environ["RACKSDOCK_ROLE"] = "verifier"
+    os.environ.setdefault("RACKSDOCK_HOTKEY", "platform-verifier")
+    n = _neuron()
+    try:
+        asyncio.run(n.run())
+    except KeyboardInterrupt:
+        pass
+
+
+@app.command()
 def qualify(node_id: str, kind: str = "full"):
     n = _neuron()
 
