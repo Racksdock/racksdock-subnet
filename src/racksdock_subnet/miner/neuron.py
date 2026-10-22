@@ -67,7 +67,7 @@ class MinerNeuron:
         except NotImplementedError:
             log.info("register the hotkey with btcli: btcli subnet register --netuid %s", self.cfg.netuid)
 
-    async def bootstrap(self, timeout_s: float = 900, reuse: bool = False) -> RegistrationRecord:
+    async def bootstrap(self, timeout_s: float = 1800, reuse: bool = False) -> RegistrationRecord:
         """Boot a verify VM via the platform, wait for the identity draft produced by that request, commit, register. reuse=True
         re-signs the identity this host already proved (no VM): a registered node changing its tier/profile/spec."""
         if not self.host_pubkey:
@@ -84,13 +84,39 @@ class MinerNeuron:
                 continue
             raise RuntimeError(f"bootstrap request failed: {r.status_code} {r.text[:200]}")
         command_id = r.json().get("command_id")
+        log.info("bootstrap requested (command %s): the host boots the verify image and reports the GPU identity; on the server, "
+                 "`journalctl -fu racksdock-host-agent` shows its progress", command_id)
         draft = None
+        started = asyncio.get_running_loop().time()
+        seen_notes: set[str] = set()
+        last_progress = started
         while asyncio.get_running_loop().time() < deadline:
-            drafts = (await self.c.get(f"/v1/miners/identity-drafts/{self.host_pubkey}")).json()["drafts"]
+            try:
+                resp = (await self.c.get(f"/v1/miners/identity-drafts/{self.host_pubkey}")).json()
+            except Exception as e:
+                log.warning("platform unreachable (%s); retrying", str(e)[:120])
+                await asyncio.sleep(self.cfg.poll_s)
+                continue
+            drafts = resp["drafts"]
             mine = [d for d in drafts if d.get("command_id") == command_id] if command_id else drafts
             if mine:
                 draft = mine[0]
                 break
+            # what the host says about our command: progress lines are shown once, an error ends the wait with the reason
+            for note in resp.get("notes") or []:
+                if command_id and note.get("command_id") != command_id:
+                    continue
+                key = f"{note.get('at')}|{note.get('message')}"
+                if key in seen_notes:
+                    continue
+                seen_notes.add(key)
+                if note.get("kind") == "error":
+                    raise RuntimeError(f"the host could not complete the bootstrap: {note.get('message')}")
+                log.info("host: %s", note.get("message"))
+            now = asyncio.get_running_loop().time()
+            if now - last_progress >= 30:
+                last_progress = now
+                log.info("still waiting for the host's identity draft (%ds elapsed, up to %ds)", int(now - started), int(timeout_s))
             await asyncio.sleep(self.cfg.poll_s)
         if draft is None:
             raise TimeoutError("no identity draft from host-agent (is racksdock-host-agent running on the node and connected to this platform?)")

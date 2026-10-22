@@ -79,3 +79,43 @@ async def test_miner_bootstraps_and_registers_node(tmp_path):
             await htask
         except (asyncio.CancelledError, Exception):
             pass
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_shows_host_notes_and_fails_fast_on_host_error(caplog):
+    """While waiting for the identity draft the miner relays the host's progress notes and stops with the host's error text."""
+    import logging
+
+    from racksdock_subnet.miner import neuron as mn
+
+    cls = next(c for c in vars(mn).values() if isinstance(c, type) and hasattr(c, "bootstrap"))
+
+    class Resp:
+        def __init__(self, status_code, body):
+            self.status_code, self._body, self.text = status_code, body, str(body)
+
+        def json(self):
+            return self._body
+
+    class FakeClient:
+        def __init__(self):
+            self.polls = 0
+
+        async def post(self, path, **kw):
+            return Resp(200, {"command_id": "cmd_x"})
+
+        async def get(self, path):
+            self.polls += 1
+            notes = [{"command_id": "cmd_x", "kind": "log", "message": "waiting for catalog image verify_v2 (download in progress, 0s so far)", "at": "t1"}]
+            if self.polls >= 2:
+                notes.append({"command_id": "cmd_x", "kind": "error", "message": "launch failed: container image racksdock/verify:v2 not present on this host", "at": "t2"})
+            return Resp(200, {"drafts": [], "notes": notes})
+
+    class Cfg:
+        poll_s = 0.01
+
+    n = cls.__new__(cls)
+    n.host_pubkey, n.c, n.cfg = "ab" * 32, FakeClient(), Cfg()
+    with caplog.at_level(logging.INFO), pytest.raises(RuntimeError, match="not present on this host"):
+        await cls.bootstrap(n, timeout_s=5)
+    assert any("waiting for catalog image" in r.getMessage() for r in caplog.records)
