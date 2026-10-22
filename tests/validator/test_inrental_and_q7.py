@@ -339,3 +339,29 @@ def test_step_name_table_matches_the_checks():
     src = "".join(Path(ck.__file__).parent.parent.joinpath(f).read_text() for f in ("suite/checks.py", "admission.py"))
     actual = dict(re.findall(r'CheckResult\(id="([ABQ]\d+)", name="([^"]*)"', src))
     assert actual and all(ck.CHECK_NAMES[k] == v for k, v in actual.items()), {k: (ck.CHECK_NAMES.get(k), v) for k, v in actual.items() if ck.CHECK_NAMES.get(k) != v}
+
+
+def test_host_outages_score_as_failed_not_idle_or_rented():
+    """Platform-recorded host outages: offline minutes are removed from rented time (the tenant was not served) and from idle
+    pay, and count as failed availability; a node dropped and still offline counts up to the window end."""
+    import datetime as dt
+
+    from racksdock_subnet.validator.snapshot import build_inputs
+
+    start, end = dt.datetime(2026, 10, 22, 4, 0, tzinfo=dt.UTC), dt.datetime(2026, 10, 22, 5, 0, tzinfo=dt.UTC)
+    canary = {"kind": "canary", "envelope": {"payload": {"node_id": "n1", "outcome": "pass", "finished_at": "2026-10-22T04:05:00Z"}}}
+    base = {"node_id": "n1", "miner_hotkey": "hk", "status": "qualified", "qualified_at": "2026-10-22T00:00:00Z", "qualification": {"outcome": "pass"}, "perf": 1.0}
+    # idle node, offline 04:20 -> 04:50 (30 min): 30 available, 30 failed
+    (a,) = build_inputs([{**base, "outages": [{"started_at": "2026-10-22T04:20:00Z", "ended_at": "2026-10-22T04:50:00Z"}]}], [], [canary], {"n1": {}}, start, end, "v")
+    assert (a.minutes_available, a.minutes_failed, a.minutes_rented) == (30.0, 30.0, 0.0)
+    # still offline (dropped at 04:40, no outage row yet): offline to the window end
+    (b,) = build_inputs([{**base, "offline_since": "2026-10-22T04:40:00Z"}], [], [canary], {"n1": {}}, start, end, "v")
+    assert (b.minutes_available, b.minutes_failed) == (40.0, 20.0)
+    # rented all hour with passing checks, host offline 04:30 -> 04:45: 45 rented, 15 failed, nothing idle
+    lease = {"node_id": "n1", "instance_id": "i1", "is_validator": False, "active_at": "2026-10-22T03:00:00Z", "released_at": None}
+    chk = {"kind": "inrental", "envelope": {"payload": {"instance_id": "i1", "validator_key": "v", "attestation_ok": True, "gpu_ids_match": True, "checked_at": "2026-10-22T04:10:00Z"}}}
+    (c,) = build_inputs([{**base, "outages": [{"started_at": "2026-10-22T04:30:00Z", "ended_at": "2026-10-22T04:45:00Z"}]}], [lease], [chk, canary], {"n1": {}}, start, end, "v")
+    assert (c.minutes_rented, c.minutes_failed, c.minutes_available) == (45.0, 15.0, 0.0)
+    # no outage data at all: unchanged behaviour
+    (d,) = build_inputs([base], [lease], [chk, canary], {"n1": {}}, start, end, "v")
+    assert (d.minutes_rented, d.minutes_failed, d.minutes_available) == (60.0, 0.0, 0.0)

@@ -151,7 +151,7 @@ class ValidatorNeuron:
             if adm.outcome != "pass":
                 log.warning("admission failed for %s: %s", node["node_id"][:16], adm.failing_checks)
                 return
-        rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full")
+        await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full")
         # whatever the outcome: a quarantined first attempt waits retry_quarantined_s like any other retry (the miner needs time
         # to fix the node; re-running at once only repeats the failure)
         self.last_requal[node["node_id"]] = time.time()

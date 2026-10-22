@@ -578,6 +578,8 @@ class NodeAvailability(BaseModel):
     instance_type: str = ""
     deployment: str = "vm"
     status: str = "registered"  # registered | qualified | quarantined | retired
+    host_connected: bool = True  # False: the host agent is unreachable; such a node is listed only while a tenant rents it
+    offline_since: str | None = None
 
 
 class AttestationView(BaseModel):

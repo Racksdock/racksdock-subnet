@@ -31,6 +31,15 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
     for n in nodes:
         nid = n["node_id"]
         q = n.get("qualification") or {}
+        # host outages (platform-recorded, public): time the host agent was unreachable is neither rented nor available
+        outages = [(_ts(o["started_at"]), _ts(o["ended_at"]) if o.get("ended_at") else window_end) for o in (n.get("outages") or []) if o.get("started_at")]
+        if n.get("offline_since") and not any(o1 >= window_end for _, o1 in outages):
+            outages.append((_ts(n["offline_since"]), window_end))  # dropped but not yet declared an outage: still offline now
+
+        def offline_within(b0: dt.datetime, b1: dt.datetime) -> float:
+            return sum(_overlap_minutes(o0, o1, b0, b1) for o0, o1 in outages)
+
+        offline_total = min(tempo_minutes, offline_within(window_start, window_end))
         # rented minutes: tenant leases overlapping the window whose in-rental checks (ours) passed
         rented = 0.0
         last_att_ok = True
@@ -47,20 +56,23 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
             if not in_window and observed:
                 in_window = [max(observed, key=lambda c: c.get("checked_at") or "")]
             if in_window and all(c["attestation_ok"] and c["gpu_ids_match"] for c in in_window):
-                rented += _overlap_minutes(a0, a1, window_start, window_end)
+                lo, hi = max(a0, window_start), min(a1, window_end)
+                gone = offline_within(lo, hi) if hi > lo else 0.0  # the tenant was not served while the host was offline
+                rented += max(0.0, _overlap_minutes(a0, a1, window_start, window_end) - gone)
             elif in_window:
                 last_att_ok = False
-        # available minutes: idle time covered by a passed canary in the window or within 6h before it
+        # available minutes: idle time covered by a passed canary in the window or within 6h before it; offline time never counts
         cans = canaries_by_node.get(nid, [])
         failed = [c for c in cans if c["outcome"] in ("fail", "refused") and window_start <= _ts(c["finished_at"]) <= window_end]
         passed = [c for c in cans if c["outcome"] == "pass" and _ts(c["finished_at"]) >= window_start - dt.timedelta(hours=6)]
-        idle = max(0.0, tempo_minutes - rented)
+        idle = max(0.0, tempo_minutes - rented - offline_total)  # offline minutes are neither rented nor idle-available
         if failed:
             available, failed_min = 0.0, idle
         elif passed:
             available, failed_min = idle, 0.0
         else:
             available, failed_min = 0.0, 0.0  # no evidence of availability -> no idle pay
+        failed_min += offline_total
         ver = verification.get(nid, {})
         strikes = decayed_strikes([{"at": s["at"], "weight": s["weight"]} for s in ver.get("strikes", [])], window_end)
         can_total = ver.get("canaries", {}).get("total") or 0
