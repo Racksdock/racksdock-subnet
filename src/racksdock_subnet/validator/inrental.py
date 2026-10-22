@@ -47,8 +47,10 @@ async def check_instance(cfg, platform: PlatformClient, verifier, lease: dict, n
             raise RuntimeError((raw or {}).get("error", "no response") if isinstance(raw, dict) else "malformed response")
         resp_env = SignedEnvelope.model_validate(raw)
     except Exception as e:
+        # no answer from the node-agent: inconclusive, not a failure. A tenant may stop the agent (docs/03 §7); the node is then
+        # scored on reachability and the last conclusive attestation. Only a conclusive mismatch counts against the miner.
         result = InRentalCheckResult(node_id=node_id, instance_id=iid, validator_key=platform.key.public.hex, checked_at=utcnow_iso(), attestation_ok=False,
-                                     gpu_ids_match=False, reachable=reachable, error=f"challenge failed: {e}"[:200])
+                                     gpu_ids_match=False, reachable=reachable, agent_reachable=False, error=f"challenge failed: {e}"[:200])
         await platform.publish("inrental", result.model_dump(by_alias=True, mode="json"))
         return result
     errors = []
@@ -77,7 +79,7 @@ async def check_instance(cfg, platform: PlatformClient, verifier, lease: dict, n
             if g.ecc_uncorrectable_total > 0:
                 errors.append(f"gpu {g.index} uncorrectable ECC {g.ecc_uncorrectable_total}")
     result = InRentalCheckResult(node_id=node_id, instance_id=iid, validator_key=platform.key.public.hex, checked_at=utcnow_iso(), attestation_ok=att_ok, gpu_ids_match=ids_match,
-                                 health=health, reachable=reachable, error="; ".join(errors)[:300] if errors else None)
+                                 health=health, reachable=reachable, agent_reachable=True, error="; ".join(errors)[:300] if errors else None)
     await platform.publish("inrental", result.model_dump(by_alias=True, mode="json"))
     # consequences (docs/04 §7): a lowered power limit is the miner's doing (strike); thermal/HW slowdowns are a facility problem
     # worth an incident but not a strike per check; ECC faults are hardware incidents.

@@ -439,3 +439,35 @@ def test_compare_inputs_reports_field_differences():
     assert compare_inputs([ni("a", 21.0)], [ni("a", 21.0)]) == []
     d = compare_inputs([ni("a", 21.0), ni("b", 0.0)], [ni("a", 20.0)])
     assert d == ["b: only in snapshot", "a minutes_available: snapshot=21.0 public=20.0"]
+
+
+def test_unanswered_inrental_checks_are_inconclusive_not_failures():
+    """The tenant stopped the node-agent: checks come back agent_reachable=False. They neither gate the node nor stop rented
+    minutes while the instance's SSH port answers and the last conclusive attestation passed; a conclusive mismatch still gates."""
+    import datetime as dt
+
+    from racksdock_subnet.validator.snapshot import build_inputs
+
+    start, end = dt.datetime(2026, 10, 22, 12, 0, tzinfo=dt.UTC), dt.datetime(2026, 10, 22, 13, 0, tzinfo=dt.UTC)
+    node = {"node_id": "n1", "miner_hotkey": "hk", "status": "qualified", "qualified_at": "2026-10-22T00:00:00Z", "qualification": {"outcome": "pass"}, "perf": 1.0}
+    lease = {"node_id": "n1", "instance_id": "i1", "is_validator": False, "active_at": "2026-10-21T17:00:00Z", "released_at": None}
+
+    def chk(at, ok, agent=True, port=True):
+        return {"kind": "inrental", "envelope": {"payload": {"instance_id": "i1", "validator_key": "v", "attestation_ok": ok, "gpu_ids_match": ok, "checked_at": at,
+                                                             "agent_reachable": agent, "reachable": port}}}
+
+    good_before = chk("2026-10-22T04:30:00Z", True)
+    unanswered = [chk(f"2026-10-22T12:{m:02d}:00Z", False, agent=False) for m in range(0, 60, 10)]
+    (a,) = build_inputs([node], [lease], [good_before] + unanswered, {"n1": {}}, start, end, "v")
+    assert a.minutes_rented == 60.0 and a.last_attestation_ok is True
+    # same but the SSH port is dead too: nothing served
+    dead = [chk(f"2026-10-22T12:{m:02d}:00Z", False, agent=False, port=False) for m in range(0, 60, 10)]
+    (b,) = build_inputs([node], [lease], [good_before] + dead, {"n1": {}}, start, end, "v")
+    assert b.minutes_rented == 0.0 and b.last_attestation_ok is True
+    # a conclusive mismatch in the window gates the node
+    (c,) = build_inputs([node], [lease], [good_before] + unanswered + [chk("2026-10-22T12:45:00Z", False, agent=True)], {"n1": {}}, start, end, "v")
+    assert c.minutes_rented == 0.0 and c.last_attestation_ok is False
+    # legacy records without agent_reachable behave as before (conclusive)
+    legacy = {"kind": "inrental", "envelope": {"payload": {"instance_id": "i1", "validator_key": "v", "attestation_ok": False, "gpu_ids_match": False, "checked_at": "2026-10-22T12:30:00Z"}}}
+    (d,) = build_inputs([node], [lease], [good_before, legacy], {"n1": {}}, start, end, "v")
+    assert d.last_attestation_ok is False

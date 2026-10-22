@@ -61,16 +61,23 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
             checks = inrental_by_instance.get(lease["instance_id"], [])
             mine = [c for c in checks if c["validator_key"] == validator_key]
             observed = mine or checks
+            # a check the node-agent did not answer (tenant stopped it, VM frozen) is inconclusive (docs/03 §7): the attestation
+            # state comes from conclusive checks only; such minutes still count as rented while the instance's SSH port answers
+            conclusive = [c for c in observed if c.get("agent_reachable") is not False]
             # only this window's checks count (an old failure must not gate a node forever); with none in the window, the latest
-            # check decides the attestation state
-            in_window = [c for c in observed if not c.get("checked_at") or window_start <= _ts(c["checked_at"]) <= window_end]
-            if not in_window and observed:
-                in_window = [max(observed, key=lambda c: c.get("checked_at") or "")]
-            if in_window and all(c["attestation_ok"] and c["gpu_ids_match"] for c in in_window):
+            # conclusive check decides the attestation state
+            in_window = [c for c in conclusive if not c.get("checked_at") or window_start <= _ts(c["checked_at"]) <= window_end]
+            if not in_window and conclusive:
+                in_window = [max(conclusive, key=lambda c: c.get("checked_at") or "")]
+            inconclusive_in_window = [c for c in observed if c.get("agent_reachable") is False and c.get("checked_at") and window_start <= _ts(c["checked_at"]) <= window_end]
+            att_ok = bool(in_window) and all(c["attestation_ok"] and c["gpu_ids_match"] for c in in_window)
+            port_ok = all(c.get("reachable") is not False for c in inconclusive_in_window)
+            if (att_ok or (not in_window and not conclusive)) and port_ok:
+                # attested (or never contradicted) and the tenant's machine answers: served
                 lo, hi = max(a0, window_start), min(a1, window_end)
                 gone = offline_within(lo, hi) if hi > lo else 0.0  # the tenant was not served while the host was offline
                 rented += max(0.0, _overlap_minutes(a0, a1, window_start, window_end) - gone)
-            elif in_window:
+            elif in_window and not att_ok:
                 last_att_ok = False
         # available minutes: idle time covered by a passed canary in the window or within the look-back before it; offline time never counts
         cans = canaries_by_node.get(nid, [])

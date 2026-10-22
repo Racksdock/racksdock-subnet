@@ -372,7 +372,8 @@ class InRentalCheckResult(BaseModel):
     attestation_ok: bool
     gpu_ids_match: bool
     health: HealthReport | None = None
-    reachable: bool | None = None
+    reachable: bool | None = None  # the instance's SSH port answered
+    agent_reachable: bool | None = None  # False: the host could not reach the node-agent (tenant stopped it, VM frozen): attestation unknown, not failed
     error: str | None = None
 
     model_config = {"populate_by_name": True}
