@@ -30,6 +30,7 @@ class Ctx:
     measured: dict[str, float] = field(default_factory=dict)  # dotted metric -> value (feeds SpecMeasured and perf)
     extra: dict[str, Any] = field(default_factory=dict)
     profile: Profile = field(default_factory=current_profile)
+    calibration: bool = False  # the profile's reference values are not confirmed yet: measure and record, never fail on a ratio
 
     @property
     def gpu_count(self) -> int:
@@ -40,7 +41,7 @@ class Ctx:
 
     @property
     def floor(self) -> float:
-        return specdata.thresholds()["ratio_floor"]
+        return 0.0 if self.calibration else specdata.thresholds()["ratio_floor"]
 
 
 def _norm_pci(pci: str) -> str:

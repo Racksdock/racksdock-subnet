@@ -211,7 +211,8 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
     try:
         if sess.boot.ok:
             runner = sessions.runner(sess)
-            ctx = Ctx(runner=runner, reference=cfg.reference_set or prof.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=int(node["registration"]["claimed_spec"]["vcpus"]), profile=prof)
+            ctx = Ctx(runner=runner, reference=cfg.reference_set or prof.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=int(node["registration"]["claimed_spec"]["vcpus"]), profile=prof,
+                      calibration=prof.name in cfg.calibration_profiles)
             ctx.extra["iperf_endpoints"] = list(cfg.iperf_endpoints)
             try:
                 checks += await run_suite(ctx, kind=kind, only=only, progress=prog)
@@ -232,7 +233,11 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
         r = {**(base.get("performance") or {}).get("ratios", {}), **r}
         spec_base = base.get("spec_measured")
     perf = perf_score(r)
-    gate, below = gate_ok({k: v for k, v in r.items() if k in thresholds()["core_perf_metrics"]})
+    calibration = prof.name in cfg.calibration_profiles
+    if calibration:
+        gate, below = True, []  # reference values unconfirmed for this class: the record carries the measurements, nothing gates
+    else:
+        gate, below = gate_ok({k: v for k, v in r.items() if k in thresholds()["core_perf_metrics"]})
     failing = [c.id for c in checks if not c.passed]
     incomplete = any(c.skipped for c in checks)
     if failing or not gate:
@@ -248,7 +253,7 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
         attestation=AttestationSummary(gpu_ids=sess.boot.gpu_ids, measurements_hash=(sess.boot.result.measurements_hash if sess.boot.result else None), verifier_version=sess.boot.result.verifier if sess.boot.result else ""),
         spec_measured=(SpecMeasured.model_validate(merge_measured(spec_base, spec_from_measured(measured, extra, prof).model_dump())) if spec_base else spec_from_measured(measured, extra, prof)),
         performance=PerformanceSummary(ratios={k: round(v, 4) for k, v in r.items()}, perf=round(perf, 4)),
-        reference_set=cfg.reference_set, evidence_bundle=f"{platform.base_url}/v1/evidence?instance_id={sess.instance_id}",
+        reference_set=("calibration:" + (cfg.reference_set or prof.reference_set)) if calibration else cfg.reference_set, evidence_bundle=f"{platform.base_url}/v1/evidence?instance_id={sess.instance_id}",
     )
     await platform.publish("qualification", rec.model_dump(by_alias=True, mode="json"))
     log.info("qualified %s: %s perf=%.3f failing=%s%s", node["node_id"][:16], outcome, perf, failing, f" (re-ran only {retried})" if retried else "")

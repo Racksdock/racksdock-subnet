@@ -496,3 +496,14 @@ def test_a_crashed_session_backs_the_node_off(monkeypatch, tmp_path):
     t0 = time.time()
     asyncio.run(n._guard("sha256:dead", boom()))
     assert n.last_requal["sha256:dead"] >= t0 and "sha256:dead" not in n.busy
+
+
+def test_calibration_profile_disables_ratio_floors(monkeypatch):
+    from racksdock_subnet.validator.config import ValidatorConfig
+    from racksdock_subnet.validator.suite.checks import Ctx
+
+    monkeypatch.setenv("RACKSDOCK_CALIBRATION_PROFILES", "b300x8, gb200x8")
+    cfg = ValidatorConfig.from_env()
+    assert cfg.calibration_profiles == ("b300x8", "gb200x8")
+    assert Ctx(runner=None, reference="ref_dev_v0", dev_mode=True, claimed_vcpus=1).floor == 0.9
+    assert Ctx(runner=None, reference="ref_dev_v0", dev_mode=True, claimed_vcpus=1, calibration=True).floor == 0.0

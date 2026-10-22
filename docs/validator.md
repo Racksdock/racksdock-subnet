@@ -28,3 +28,11 @@ Modes: `RACKSDOCK_RUNNER=ssh|sim`, `RACKSDOCK_TRUST_MODE=prod|dev`, `RACKSDOCK_C
   one, then compares its own weights with the platform's recorded round. Any difference is printed; none means the platform's
   snapshot is exactly what its public records say.
 - `racksdock-validator all-in-one` (verify + score in one process) remains for simulations and tests only.
+
+## Calibration of a new hardware class
+
+The first real node of a class has no confirmed reference values and its SKU may still be `to_confirm` in the allowlist. Set
+`RACKSDOCK_CALIBRATION_PROFILES=b300x8` on the verifier: for that profile every check still runs and every value is recorded,
+but no reference ratio gates the outcome (`reference_set` in the record reads `calibration:<set>`), and in dev trust mode an
+unconfirmed allowlist entry matches by model name while the record lists the PCI id, board part and VBIOS to confirm. Build the
+real reference set from the record's `spec_measured`, confirm the allowlist entry, remove the profile from the variable.

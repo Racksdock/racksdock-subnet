@@ -95,3 +95,17 @@ def test_sku_check(ca, node_dir):
     inv[0].memory_total_mib = 100 * 1024
     ok3, errors3, _ = check_sku(inv, dev_mode=True)
     assert not ok3 and "below floor" in errors3[0]
+
+
+def test_unconfirmed_sku_matches_by_model_name_in_dev_mode_only():
+    """A production allowlist entry still marked to_confirm (pci id TBD) accepts a GPU by model name in dev trust mode, and
+    records what must be confirmed; in prod trust mode the unknown pci id is an error."""
+    from racksdock_subnet.verifier.inventory import GpuInventory
+    from racksdock_subnet.verifier.sku import check_sku
+
+    inv = [GpuInventory(index=i, name="NVIDIA B300", serial=f"S{i}", pci_device_id="10de:2b45", vbios="97.10.3A.00.01", memory_total_mib=288 * 1024, power_limit_w=1400.0,
+                        board_part="900-2G530-0040-000") for i in range(8)]
+    ok, errors, details = check_sku(inv, dev_mode=True, expected=8)
+    assert ok and not errors and len(details["unconfirmed_sku"]) == 8 and details["unconfirmed_sku"][0]["pci_device_id"] == "10de:2b45"
+    ok, errors, _ = check_sku(inv, dev_mode=False, expected=8)
+    assert not ok and "not in allowlist" in errors[0]

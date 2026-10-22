@@ -25,6 +25,7 @@ class ValidatorConfig:
     ssh_user: str = "ubuntu"
     sim_profile: Path | None = None
     reference_set: str = ""  # empty -> the active profile's reference set
+    calibration_profiles: tuple[str, ...] = ()  # profiles whose reference thresholds are not enforced yet (first real nodes): record, never gate
     iperf_endpoints: tuple[str, ...] = ("iperf.racksdock-validator.local",)
     # cadence (seconds); the simulator shortens these
     canary_mean_interval_s: float = 10800
@@ -52,6 +53,7 @@ class ValidatorConfig:
             netuid=int(e("RACKSDOCK_NETUID", "1")), chain_kind=e("RACKSDOCK_CHAIN", "mock"), role=e("RACKSDOCK_ROLE", "all"), chain_file=Path(e("RACKSDOCK_CHAIN_FILE", "./chain.json")),
             chain_network=e("RACKSDOCK_CHAIN_NETWORK", "finney"), runner=e("RACKSDOCK_RUNNER", "ssh"), ssh_user=e("RACKSDOCK_SSH_USER", "ubuntu"),
             sim_profile=Path(e("RACKSDOCK_SIM_PROFILE")) if e("RACKSDOCK_SIM_PROFILE") else None, reference_set=e("RACKSDOCK_REFERENCE_SET", ""),
+            calibration_profiles=tuple(x.strip() for x in e("RACKSDOCK_CALIBRATION_PROFILES", "").split(",") if x.strip()),
             iperf_endpoints=tuple(x.strip() for x in e("RACKSDOCK_IPERF_ENDPOINTS", "iperf.racksdock-validator.local").split(",") if x.strip()),
             canary_mean_interval_s=float(e("RACKSDOCK_CANARY_MEAN_S", "10800")), canary_deadline_s=float(e("RACKSDOCK_CANARY_DEADLINE_S", "600")),
             inrental_interval_s=float(e("RACKSDOCK_INRENTAL_S", "600")), microbench_interval_s=float(e("RACKSDOCK_MICROBENCH_S", "1800")),
