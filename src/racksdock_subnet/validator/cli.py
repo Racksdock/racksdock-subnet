@@ -21,6 +21,21 @@ def _neuron() -> ValidatorNeuron:
 
 
 @app.command()
+def light():
+    """Run a light validator: fetch the platform-signed scoring snapshot every tempo, run the deterministic scorer, set weights.
+    No SSH key, no API key, no verify sessions (docs/04 §6)."""
+    from .light import LightValidator
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    v = LightValidator(ValidatorConfig.from_env())
+    try:
+        asyncio.run(v.run())
+    except KeyboardInterrupt:
+        pass
+
+
+@app.command()
 def enroll():
     n = _neuron()
     asyncio.run(n.ensure_enrolled())

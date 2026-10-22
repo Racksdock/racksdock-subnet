@@ -10,7 +10,7 @@ from racksdock_subnet.core.specdata import thresholds
 
 from .inrental import probe
 from .platform import PlatformClient
-from .qualify import Sessions
+from .qualify import Sessions, node_profile
 from .suite.checks import Ctx, smoke
 
 log = logging.getLogger("racksdock.validator.admission")
@@ -59,7 +59,7 @@ async def admission_test(cfg, platform: PlatformClient, sessions: Sessions, node
     try:
         runner = sessions.runner(sess2)
         try:
-            ctx = Ctx(runner=runner, reference=cfg.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=0)
+            ctx = Ctx(runner=runner, reference=cfg.reference_set or node_profile(node).reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=0, profile=node_profile(node))
             ctx.extra["iperf_endpoints"] = list(cfg.iperf_endpoints)
             sm = await smoke(ctx)
             same_gpus = set(sess2.boot.gpu_ids) == set(sess.boot.gpu_ids) and sess2.boot.ok
@@ -69,6 +69,22 @@ async def admission_test(cfg, platform: PlatformClient, sessions: Sessions, node
             await runner.close()
     finally:
         await sessions.close(sess2)
+    # 5. a dual node must deliver its second mode too: a container rental boots, attests the same GPU set and takes our key
+    if (node.get("registration") or {}).get("deployment") == "dual":
+        try:
+            sess3 = await sessions.open(node, deadline_s=deadline, name="admission-container", deployment="container")
+            try:
+                runner = sessions.runner(sess3)
+                try:
+                    who = await runner.run("echo racksdock-admission-ok; cat /proc/1/cgroup | head -1")
+                finally:
+                    await runner.close()
+                same = set(sess3.boot.gpu_ids) == set(sess.boot.gpu_ids) and sess3.boot.ok
+                checks.append(CheckResult(id="A5", name="Container mode delivers the same GPUs", passed=same and who.rc == 0, details={"time_to_active_s": round(sess3.time_to_active_s, 1), "same_gpu_set": same}))
+            finally:
+                await sessions.close(sess3)
+        except RuntimeError as e:
+            checks.append(CheckResult(id="A5", name="Container mode delivers the same GPUs", passed=False, error=str(e)[:200]))
     failing = [c.id for c in checks if not c.passed]
     rec = QualificationRecord(kind="admission", node_id=node["node_id"], validator_hotkey=cfg.hotkey, validator_key=platform.key.public.hex, instance_id=sess.instance_id,
                               verify_image=sess.info["attestation"].get("image_version") or "verify", started_at=started, finished_at=utcnow_iso(),

@@ -19,6 +19,7 @@ class ValidatorConfig:
     chain_network: str = "finney"
     wallet_name: str = "default"
     wallet_hotkey: str = "default"
+    wallet_path: str | None = None
     runner: str = "ssh"  # ssh | sim
     ssh_user: str = "ubuntu"
     sim_profile: Path | None = None
@@ -33,15 +34,13 @@ class ValidatorConfig:
     requal_interval_s: float = 7 * 86400
     retry_quarantined_s: float = 3600
     tempo_s: float = 72 * 60
+    platform_pubkey: str | None = None  # light validators: pin the platform's signing key (default: pinned on first contact in state_dir)
     loop_interval_s: float = 10
     qualification_full: bool = True
     trust: TrustConfig = field(default_factory=TrustConfig.from_env)
 
     def __post_init__(self) -> None:
-        if not self.reference_set:
-            from racksdock_subnet.core.profile import current
-
-            self.reference_set = current().reference_set
+        pass  # reference_set stays empty unless overridden: each node's profile supplies its own (docs/03 §6)
 
     @classmethod
     def from_env(cls) -> ValidatorConfig:
@@ -58,6 +57,8 @@ class ValidatorConfig:
             reachability_interval_s=float(e("RACKSDOCK_REACH_S", "60")), requal_interval_s=float(e("RACKSDOCK_REQUAL_S", str(7 * 86400))),
             retry_quarantined_s=float(e("RACKSDOCK_RETRY_QUARANTINED_S", "3600")),
             tempo_s=float(e("RACKSDOCK_TEMPO_S", str(72 * 60))), loop_interval_s=float(e("RACKSDOCK_LOOP_S", "10")),
+                   wallet_name=e("RACKSDOCK_WALLET_NAME", "default"), wallet_hotkey=e("RACKSDOCK_WALLET_HOTKEY", "default"), wallet_path=e("RACKSDOCK_WALLET_PATH") or None,
+                   platform_pubkey=e("RACKSDOCK_PLATFORM_PUBKEY") or None,
             qualification_full=e("RACKSDOCK_QUAL_FULL", "1") == "1", trust=TrustConfig.from_env(),
         )
         return c

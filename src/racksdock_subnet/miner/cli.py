@@ -18,12 +18,13 @@ def _neuron(host_pubkey: str | None = None) -> MinerNeuron:
 
 
 @app.command()
-def bootstrap(host_pubkey: str | None = typer.Option(None, help="host-agent service key (hex); default derives from RACKSDOCK_HOST_SEED")):
+def bootstrap(host_pubkey: str | None = typer.Option(None, help="host-agent service key (hex); default derives from RACKSDOCK_HOST_SEED"),
+              reuse_identity: bool = typer.Option(False, help="re-sign the identity this host already proved with its current tier/profile/spec (no bootstrap VM)")):
     n = _neuron(host_pubkey)
 
     async def go():
         try:
-            rec = await n.bootstrap()
+            rec = await n.bootstrap(reuse=reuse_identity)
             typer.echo(f"registered node_id={rec.node_id}")
         finally:
             await n.close()

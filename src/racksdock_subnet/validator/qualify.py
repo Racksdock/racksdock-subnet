@@ -8,7 +8,9 @@ from dataclasses import dataclass
 
 from racksdock_subnet.core.envelope import utcnow_iso
 from racksdock_subnet.core.nonce import new_nonce_hex
+from racksdock_subnet.core.profile import Profile
 from racksdock_subnet.core.profile import current as current_profile
+from racksdock_subnet.core.profile import get as profile_get
 from racksdock_subnet.core.schemas import (
     AttestationSummary,
     CheckResult,
@@ -48,11 +50,23 @@ class Sessions:
 
     def __init__(self, cfg: ValidatorConfig, platform: PlatformClient, verifier, ssh_pub_line: str, ssh_key_path: str | None, poll_s: float = 1.0):
         self.cfg, self.platform, self.verifier, self.ssh_pub_line, self.ssh_key_path, self.poll_s = cfg, platform, verifier, ssh_pub_line, ssh_key_path, poll_s
+        self._verifiers: dict[int, object] = {}
 
-    async def open(self, node: dict, deadline_s: float, name: str = "verify") -> Session:
+    def verifier_for(self, node: dict):
+        """Evidence verifier expecting the node's own GPU count (nodes of different profiles share one validator)."""
+        from racksdock_subnet.verifier.verifiers import build_verifier
+
+        n = node_profile(node).gpu_count
+        if n == current_profile().gpu_count:
+            return self.verifier
+        if n not in self._verifiers:
+            self._verifiers[n] = build_verifier(self.cfg.trust, expected_devices=n)
+        return self._verifiers[n]
+
+    async def open(self, node: dict, deadline_s: float, name: str = "verify", deployment: str | None = None) -> Session:
         tn = new_nonce_hex()
         t0 = time.monotonic()
-        iid = await self.platform.create_verify_instance(node["node_id"], [self.ssh_pub_line], tn, name=name)
+        iid = await self.platform.create_verify_instance(node["node_id"], [self.ssh_pub_line], tn, name=name, deployment=deployment)
         info = None
         while time.monotonic() - t0 < deadline_s:
             info = await self.platform.instance(iid)
@@ -70,7 +84,7 @@ class Sessions:
         recs = await self.platform.evidence(instance_id=iid, kind="boot_evidence")
         if not recs:
             raise RuntimeError("no boot evidence published for our instance")
-        boot = verify_boot_evidence(self.verifier, recs[-1]["envelope"], expected_tenant_nonce=tn, user_data=info.get("user_data"),
+        boot = verify_boot_evidence(self.verifier_for(node), recs[-1]["envelope"], expected_tenant_nonce=tn, user_data=info.get("user_data"), expected_gpu_count=node_profile(node).gpu_count,
                                     registration_gpu_ids=node["registration"]["gpu_ids"], expected_image_version=info["attestation"].get("image_version"))
         return Session(instance_id=iid, info=info, tenant_nonce=tn, boot=boot, time_to_active_s=tta)
 
@@ -91,12 +105,17 @@ class Sessions:
             await asyncio.sleep(self.poll_s)
 
 
-def spec_from_measured(m: dict[str, float], extra: dict) -> SpecMeasured:
+def node_profile(node: dict) -> Profile:
+    return profile_get((node.get("registration") or {}).get("profile"))
+
+
+def spec_from_measured(m: dict[str, float], extra: dict, prof: Profile | None = None) -> SpecMeasured:
     def g(k: str) -> float:
         return float(m.get(k, 0.0))
 
+    prof = prof or current_profile()
     return SpecMeasured(
-        gpu=GpuSpecMeasured(model=current_profile().gpu_model, count=current_profile().gpu_count, vram_gb_usable_min=g("gpu.vram_gb_usable_min"), board_part=extra.get("gpu_board_part", ""),
+        gpu=GpuSpecMeasured(model=prof.gpu_model, count=prof.gpu_count, vram_gb_usable_min=g("gpu.vram_gb_usable_min"), vram_gb_total=g("gpu.vram_gb_total"), board_part=extra.get("gpu_board_part", ""),
                             vbios=extra.get("gpu_vbios", ""), pci_device_id=extra.get("gpu_pci_id", "")),
         nvlink=NvlinkMeasured(d2d_gbps_min_pair=g("nvlink.d2d_gbps_min_pair"), d2d_gbps_aggregate=g("nvlink.d2d_gbps_aggregate"), allreduce_1gb_busbw_gbps=g("nvlink.allreduce_1gb_busbw_gbps")),
         cpu=CpuMeasured(model=extra.get("cpu_model", ""), vcpus=int(m.get("cpu.vcpus", 0)), stream_gbps=g("cpu.stream_gbps"), sysbench=g("cpu.sysbench")),
@@ -109,8 +128,37 @@ def spec_from_measured(m: dict[str, float], extra: dict) -> SpecMeasured:
     )
 
 
-async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions: Sessions, node: dict, kind: str = "full") -> QualificationRecord:
+IDENTITY_CHECKS = {"Q1", "Q2", "Q3", "Q5"}  # a failure here always means a full re-run (docs/03 §4)
+
+
+def plan_targeted_retry(last: dict | None) -> set[str] | None:
+    """Which checks a quarantined node's retry must re-run. A quarantine caused only by environment checks (network, disk, CPU,
+    power, ...) re-runs just those; identity/GPU failures, perf gate failures and incomplete runs re-run everything (None)."""
+    if not last or last.get("kind") != "full" or last.get("outcome") != "quarantined":
+        return None
+    failing = list(last.get("failing_checks") or [])
+    if not failing or any(f.startswith("perf<") or f in IDENTITY_CHECKS for f in failing):
+        return None
+    if any(c.get("skipped") for c in last.get("checks") or [] if c.get("id") in failing):
+        return None
+    return set(failing)
+
+
+def merge_measured(base: dict, new: dict) -> dict:
+    """Overlay freshly measured values on a previous record's structure: a value counts as fresh unless it is unset (0, '', [], None)."""
+    out = dict(base)
+    for k, v in new.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = merge_measured(out[k], v)
+        elif v not in (0, 0.0, "", [], None, False):
+            out[k] = v
+    return out
+
+
+async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions: Sessions, node: dict, kind: str = "full",
+                       only: set[str] | None = None, base: dict | None = None) -> QualificationRecord:
     started = utcnow_iso()
+    prof = node_profile(node)
     sess = await sessions.open(node, deadline_s=thresholds()["canary_deadline_s"], name=f"qualify-{kind}")
     checks: list[CheckResult] = [CheckResult(id="Q1", name="GPU authenticity and identity", passed=sess.boot.ok, details={"errors": sess.boot.errors, "gpu_ids": sess.boot.gpu_ids,
                                                                                                                              "measurements_hash": sess.boot.result.measurements_hash if sess.boot.result else None})]
@@ -119,16 +167,26 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
     try:
         if sess.boot.ok:
             runner = sessions.runner(sess)
-            ctx = Ctx(runner=runner, reference=cfg.reference_set or current_profile().reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=int(node["registration"]["claimed_spec"]["vcpus"]))
+            ctx = Ctx(runner=runner, reference=cfg.reference_set or prof.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=int(node["registration"]["claimed_spec"]["vcpus"]), profile=prof)
             ctx.extra["iperf_endpoints"] = list(cfg.iperf_endpoints)
             try:
-                checks += await run_suite(ctx, kind=kind)
+                checks += await run_suite(ctx, kind=kind, only=only)
             finally:
                 await runner.close()
             measured, extra = ctx.measured, ctx.extra
     finally:
         await sessions.close(sess)
-    r = ratios(measured, cfg.reference_set or current_profile().reference_set)
+    r = ratios(measured, cfg.reference_set or prof.reference_set)
+    retried: list[str] = []
+    spec_base: dict | None = None
+    if only is not None and base is not None:
+        # targeted retry: previous results stand for everything that was not re-run
+        retried = sorted(only)
+        reran = {c.id for c in checks}
+        checks += [CheckResult.model_validate(c) for c in base.get("checks", []) if c.get("id") not in reran]
+        checks.sort(key=lambda c: int(c.id[1:]) if c.id[1:].isdigit() else 99)
+        r = {**(base.get("performance") or {}).get("ratios", {}), **r}
+        spec_base = base.get("spec_measured")
     perf = perf_score(r)
     gate, below = gate_ok({k: v for k, v in r.items() if k in thresholds()["core_perf_metrics"]})
     failing = [c.id for c in checks if not c.passed]
@@ -142,11 +200,12 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
     rec = QualificationRecord(
         kind=kind, node_id=node["node_id"], validator_hotkey=cfg.hotkey, validator_key=platform.key.public.hex, instance_id=sess.instance_id,
         verify_image=sess.info["attestation"].get("image_version") or "verify", started_at=started, finished_at=utcnow_iso(), outcome=outcome,
-        failing_checks=failing + ([f"perf<{thresholds()['ratio_floor']}:{','.join(below)}"] if below else []), checks=checks,
+        failing_checks=failing + ([f"perf<{thresholds()['ratio_floor']}:{','.join(below)}"] if below else []), checks=checks, retried_checks=retried,
         attestation=AttestationSummary(gpu_ids=sess.boot.gpu_ids, measurements_hash=(sess.boot.result.measurements_hash if sess.boot.result else None), verifier_version=sess.boot.result.verifier if sess.boot.result else ""),
-        spec_measured=spec_from_measured(measured, extra), performance=PerformanceSummary(ratios={k: round(v, 4) for k, v in r.items()}, perf=round(perf, 4)),
+        spec_measured=(SpecMeasured.model_validate(merge_measured(spec_base, spec_from_measured(measured, extra, prof).model_dump())) if spec_base else spec_from_measured(measured, extra, prof)),
+        performance=PerformanceSummary(ratios={k: round(v, 4) for k, v in r.items()}, perf=round(perf, 4)),
         reference_set=cfg.reference_set, evidence_bundle=f"{platform.base_url}/v1/evidence?instance_id={sess.instance_id}",
     )
     await platform.publish("qualification", rec.model_dump(by_alias=True, mode="json"))
-    log.info("qualified %s: %s perf=%.3f failing=%s", node["node_id"][:16], outcome, perf, failing)
+    log.info("qualified %s: %s perf=%.3f failing=%s%s", node["node_id"][:16], outcome, perf, failing, f" (re-ran only {retried})" if retried else "")
     return rec

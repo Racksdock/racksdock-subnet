@@ -62,7 +62,9 @@
     "fio_sustained_s": 120,
     "fio_size_gb": 2,
     "fio_numjobs": 4,
-    "dcgm_mandatory": []
+    "dcgm_mandatory": [],
+    "h2d_outlier_floor": 0.4,
+    "pcie_width_check": false
   },
   "notes": "RTX 4090 x8 BARE-METAL VM TEST PROFILE (temporary; delete after the test, see racksdock-node/docs/rtx4090-vm-test.md). Exercises the real libvirt/VFIO path. Ada has no device attestation (dev CA); GeForce has no NVLink and no PCIe P2P (Q5/Q6 excluded, Q8 runs NCCL over host memory); DCGM diag does not support GeForce (Q4 excluded); workload containers excluded (Q14/Q15)."
 }

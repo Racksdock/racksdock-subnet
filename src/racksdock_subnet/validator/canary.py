@@ -9,7 +9,7 @@ from racksdock_subnet.core.schemas import CanaryResult
 from racksdock_subnet.core.specdata import thresholds
 
 from .platform import PlatformClient
-from .qualify import Sessions
+from .qualify import Sessions, node_profile
 from .suite.checks import Ctx, smoke
 
 log = logging.getLogger("racksdock.validator.canary")
@@ -51,7 +51,7 @@ async def run_canary(cfg, platform: PlatformClient, sessions: Sessions, node: di
     try:
         runner = sessions.runner(sess)
         try:
-            ctx = Ctx(runner=runner, reference=cfg.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=0)
+            ctx = Ctx(runner=runner, reference=cfg.reference_set or node_profile(node).reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=0, profile=node_profile(node))
             ctx.extra["iperf_endpoints"] = list(cfg.iperf_endpoints)
             metrics = await smoke(ctx)
         finally:

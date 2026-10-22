@@ -91,6 +91,18 @@ def parse_nvbandwidth(out: str) -> dict[str, Any]:
             "aggregate_gbps": sum(sums.values()) if sums else sum(off)}
 
 
+def parse_pcie_links(out: str) -> list[dict[str, int]]:
+    """nvidia-smi --query-gpu=index,pcie.link.width.current,pcie.link.width.max,pcie.link.gen.current,pcie.link.gen.max (csv,noheader,nounits).
+    Empty for unknown/unsupported output (simulation, old drivers)."""
+    links = []
+    for line in out.splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) == 5 and all(x.isdigit() for x in parts):
+            i, wc, wm, gc, gm = (int(x) for x in parts)
+            links.append({"index": i, "width_current": wc, "width_max": wm, "gen_current": gc, "gen_max": gm})
+    return links
+
+
 def parse_nccl_tests(out: str) -> dict[str, Any]:
     """nccl-tests table: size count type redop root time algbw busbw #wrong time algbw busbw #wrong (out-of-place then in-place)."""
     rows = []
@@ -126,12 +138,19 @@ def parse_fio_json(out: str) -> dict[str, Any]:
 
 
 def parse_iperf3_json(out: str) -> dict[str, Any]:
-    data = json.loads(out)
+    """iperf3 -J output; a failed run (busy server, unreachable) is {"error": "..."} with zero rates."""
+    try:
+        data = json.loads(out) if out.strip() else {}
+    except ValueError:
+        data = {"error": out.strip()[:200] or "no output"}
     end = data.get("end", {})
     sent = end.get("sum_sent", {}).get("bits_per_second", 0) / 1e9
     recv = end.get("sum_received", {}).get("bits_per_second", 0) / 1e9
     lost = end.get("sum", {}).get("lost_percent", 0.0)
-    return {"sent_gbps": sent, "received_gbps": recv, "lost_percent": lost}
+    res = {"sent_gbps": sent, "received_gbps": recv, "lost_percent": lost}
+    if data.get("error"):
+        res["error"] = str(data["error"])[:200]
+    return res
 
 
 def parse_stream(out: str) -> dict[str, float]:
@@ -164,10 +183,19 @@ def parse_lscpu(out: str) -> dict[str, Any]:
 
 
 def parse_meminfo(out: str) -> dict[str, float]:
+    """/proc/meminfo, optionally followed by 'CGROUP_LIMIT=<bytes|max>' (container tier: the cgroup limit is the real size)."""
+    total = 0.0
+    limit = None
     for line in out.splitlines():
         if line.startswith("MemTotal:"):
-            return {"total_gb": int(line.split()[1]) / (1024 * 1024)}
-    return {"total_gb": 0.0}
+            total = int(line.split()[1]) / (1024 * 1024)
+        elif line.startswith("CGROUP_LIMIT="):
+            v = line.split("=", 1)[1].strip()
+            if v.isdigit():
+                limit = int(v) / (1024 ** 3)
+    if limit is not None and 0 < limit < total:
+        return {"total_gb": limit, "host_total_gb": total}
+    return {"total_gb": total}
 
 
 def parse_lsblk_json(out: str) -> dict[str, Any]:

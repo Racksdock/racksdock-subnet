@@ -35,9 +35,16 @@ def reference_set(name: str) -> dict:
 
 
 def approved_gpu_entries(dev_mode: bool = False) -> list[dict]:
-    from .profile import current
+    """Approved SKUs: the global allowlist plus every profile's entries (one platform serves several hardware classes)."""
+    from .profile import available, load
 
-    entries = list(allowlist()["gpus"]) + list(current().allowlist_entries)
+    entries = list(allowlist()["gpus"])
+    seen = {e["pci_device_id"].lower() for e in entries}
+    for name in available():
+        for e in load(name).allowlist_entries:
+            if e["pci_device_id"].lower() not in seen:
+                entries.append(e)
+                seen.add(e["pci_device_id"].lower())
     return [e for e in entries if dev_mode or not e.get("sim", False)]
 
 

@@ -42,7 +42,7 @@ class ValidatorNeuron:
             fetch_devca(cfg.platform_url, cfg.trust.dev_ca_dir)  # the platform publishes the simulated root (NVIDIA's role in dev mode)
             log.warning("dev trust mode: fetched the simulated device CA from %s", cfg.platform_url)
         self.verifier = build_verifier(cfg.trust)
-        self.chain = build_chain(cfg.chain_kind, path=cfg.chain_file, netuid=cfg.netuid, network=cfg.chain_network)
+        self.chain = build_chain(cfg.chain_kind, path=cfg.chain_file, netuid=cfg.netuid, network=cfg.chain_network, wallet_name=cfg.wallet_name, wallet_hotkey=cfg.wallet_hotkey, wallet_path=cfg.wallet_path)
         self.sessions = Sessions(cfg, self.platform, self.verifier, self.ssh_pub_line, str(self.ssh_key_path), poll_s=0.5 if cfg.runner == "sim" else 3.0)
         self.canaries = CanaryScheduler(cfg.canary_mean_interval_s)
         self.last_inrental: dict[str, float] = {}
@@ -92,9 +92,10 @@ class ValidatorNeuron:
             if nid in self.busy or not n.get("host_connected"):
                 continue
             lease = live_by_node.get(nid)
-            # new or quarantined node without a passing qualification -> admission + full qualification
-            if n["status"] == "registered" and lease is None:
-                self._spawn(nid, self._admit_and_qualify(n))
+            # new node -> admission + full qualification; admitted (admission passed, no full record yet, e.g. after a validator
+            # restart in between) -> full qualification only
+            if n["status"] in ("registered", "admitted") and lease is None:
+                self._spawn(nid, self._admit_and_qualify(n, skip_admission=n["status"] == "admitted"))
                 continue
             # quarantined: retry a full qualification after the retry interval (the miner may have fixed the node)
             if n["status"] == "quarantined" and lease is None and now - self.last_requal.get(nid, 0) > self.cfg.retry_quarantined_s:
@@ -127,7 +128,7 @@ class ValidatorNeuron:
                     if micro:
                         self.last_microbench[iid] = now
                     approved = float(((n.get("qualification") or {}).get("spec_measured") or {}).get("power_profile", {}).get("limit_w") or 0)
-                    asyncio.create_task(check_instance(self.cfg, self.platform, self.verifier, lease, n, micro, approved))
+                    asyncio.create_task(check_instance(self.cfg, self.platform, self.sessions.verifier_for(n), lease, n, micro, approved))  # the node's own GPU count
         if now - self.tempo_start >= self.cfg.tempo_s:
             self.tempo_start = now
             await self.score_and_set_weights(dt.datetime.now(dt.UTC))
@@ -144,8 +145,8 @@ class ValidatorNeuron:
         finally:
             self.busy.discard(node_id)
 
-    async def _admit_and_qualify(self, node: dict) -> None:
-        if self.cfg.qualification_full:
+    async def _admit_and_qualify(self, node: dict, skip_admission: bool = False) -> None:
+        if self.cfg.qualification_full and not skip_admission:
             adm = await admission_test(self.cfg, self.platform, self.sessions, node)
             if adm.outcome != "pass":
                 log.warning("admission failed for %s: %s", node["node_id"][:16], adm.failing_checks)
@@ -156,7 +157,21 @@ class ValidatorNeuron:
             self._save_state()
 
     async def _requal_full(self, node: dict) -> None:
-        rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full")
+        """Retry a quarantined node. When the quarantine came from environment checks only (network, disk, CPU, RAM, power), re-run
+        just those on a fresh session and keep the previous results for the rest; identity/GPU failures re-run the full suite."""
+        from .qualify import plan_targeted_retry
+
+        base = None
+        try:
+            recs = list(reversed(await self.platform.evidence(node_id=node["node_id"], kind="qualification", limit=50, desc="true")))
+            fulls = [r["envelope"]["payload"] for r in recs if r["envelope"]["payload"].get("kind") == "full"]
+            base = fulls[-1] if fulls else None
+        except Exception as e:
+            log.warning("could not fetch the last qualification of %s: %s", node["node_id"][:16], e)
+        only = plan_targeted_retry(base)
+        if only:
+            log.info("retry of quarantined node %s: re-running only %s", node["node_id"][:16], sorted(only))
+        rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full", only=only, base=base if only else None)
         log.info("retry of quarantined node %s -> %s %s", node["node_id"][:16], rec.outcome, rec.failing_checks)
 
     async def _requal(self, node: dict) -> None:
@@ -171,7 +186,8 @@ class ValidatorNeuron:
         window_start = now - dt.timedelta(seconds=tempo_s)
         nodes = await self.platform.nodes()
         leases = await self.platform.leases(live_only=False)
-        evidence = [e for e in await self.platform.evidence(limit=1000) if e["kind"] in ("canary", "inrental", "probe")]
+        # the newest 1000 records (the ascending default would return the oldest and freeze the scoring window in the past)
+        evidence = [e for e in reversed(await self.platform.evidence(limit=1000, desc="true")) if e["kind"] in ("canary", "inrental", "probe")]
         verification = {}
         for n in nodes:
             try:
@@ -192,8 +208,25 @@ class ValidatorNeuron:
                                                 "hotkey_weights": result.hotkey_weights, "burn": result.burn, "details": result.details, "weights": {str(k): v for k, v in weights.items()}})
         return result
 
+    async def reclaim_own_instances(self) -> None:
+        """A validator restarted mid-session leaves its verify instance live on the node (lease held, VM running). Nobody else
+        may delete it, so delete it ourselves at start; the node's readiness canary then clears the way (seen on the 8x4090 test)."""
+        try:
+            mine = await self.platform.instances()
+        except Exception as e:
+            log.warning("could not list own instances: %s", e)
+            return
+        for inst in mine:
+            if inst.get("status") in ("creating", "pending_provider", "pending", "active", "degraded"):
+                log.warning("reclaiming orphaned verify instance %s (%s) from a previous validator process", inst["id"], inst.get("status"))
+                try:
+                    await self.platform.delete_instance(inst["id"])
+                except Exception as e:
+                    log.warning("delete of %s failed: %s", inst["id"], e)
+
     async def run(self) -> None:
         await self.ensure_enrolled()
+        await self.reclaim_own_instances()
         from racksdock_subnet.core.profile import current as current_profile
 
         prof = current_profile()

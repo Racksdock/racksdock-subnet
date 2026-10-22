@@ -62,3 +62,26 @@ def load(name: str) -> Profile:
 
 def current() -> Profile:
     return load(os.environ.get(PROFILE_ENV, DEFAULT_PROFILE))
+
+
+def get(name: str | None) -> Profile:
+    """The profile a node registered with (nodes of several hardware classes share one platform and one validator);
+    the environment's default profile when no name is given."""
+    if name and name in available():
+        return load(name)
+    return current()
+
+
+# How a node delivers the rental (docs/01 §4, docs/04 §3): a KVM VM with a dedicated kernel, a Docker container on the host's
+# kernel (nested Docker, root inside), or the machine itself (lab workflow tests only). Validators score the weaker tiers at half.
+DEPLOYMENTS = ("vm", "container", "static", "dual")
+DEPLOYMENT_SCORE_FACTOR = {"vm": 1.0, "container": 0.5, "static": 0.5, "dual": 1.0}  # a node offering the VM tier earns the VM factor
+
+
+def deployment_factor(deployment: str | None) -> float:
+    return DEPLOYMENT_SCORE_FACTOR.get(deployment or "vm", 0.5)
+
+
+def deployment_modes(deployment: str | None) -> list[str]:
+    """The rental modes a node with this registered deployment can deliver."""
+    return ["vm", "container"] if deployment == "dual" else [deployment or "vm"]

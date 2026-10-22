@@ -22,7 +22,7 @@ class BootCheck:
 
 
 def verify_boot_evidence(verifier, envelope: dict, *, expected_tenant_nonce: str, user_data: str | None, registration_gpu_ids: list[str],
-                         expected_image_version: str | None = None) -> BootCheck:
+                         expected_image_version: str | None = None, expected_gpu_count: int | None = None) -> BootCheck:
     errors: list[str] = []
     env = SignedEnvelope.model_validate(envelope)
     if not env.verify() or env.kind != "boot_evidence":
@@ -41,6 +41,7 @@ def verify_boot_evidence(verifier, envelope: dict, *, expected_tenant_nonce: str
     res = verifier.verify(ev.bundle, ev.boot_nonce)
     if not res.ok:
         errors.extend(res.errors or ["attestation failed"])
-    if set(res.gpu_ids) != set(registration_gpu_ids) or len(res.gpu_ids) != current_profile().gpu_count:
+    expected_n = expected_gpu_count if expected_gpu_count is not None else current_profile().gpu_count
+    if set(res.gpu_ids) != set(registration_gpu_ids) or len(res.gpu_ids) != expected_n:
         errors.append("GPU identities do not match registration")
     return BootCheck(not errors, errors, ev, res)

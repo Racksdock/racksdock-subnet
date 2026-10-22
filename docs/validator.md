@@ -12,3 +12,13 @@ The validator neuron (docs/03, docs/04). It never trusts the platform's verdicts
 - `neuron.py`: the loop. `cli.py`: `racksdock-validator enroll | run | qualify | canary | score`.
 
 Modes: `RACKSDOCK_RUNNER=ssh|sim`, `RACKSDOCK_TRUST_MODE=prod|dev`, `RACKSDOCK_CHAIN=subtensor|mock`.
+
+## Light validator
+
+`racksdock-validator light` needs no SSH key, no API key and no node access: every `RACKSDOCK_TEMPO_S` it fetches the platform's
+signed scoring snapshot (`GET /v1/scoring/snapshot`), verifies it against the platform key pinned on first contact
+(`<state_dir>/platform.pub`, or `RACKSDOCK_PLATFORM_PUBKEY`), runs the same deterministic `score_tempo` the verifying validator
+runs, and sets weights with `RACKSDOCK_HOTKEY`. Environment: `RACKSDOCK_PLATFORM_URL`, `RACKSDOCK_HOTKEY`, `RACKSDOCK_CHAIN`
+(+ `RACKSDOCK_CHAIN_FILE` for the mock chain, wallet settings for subtensor), `RACKSDOCK_STATE_DIR`, `RACKSDOCK_TEMPO_S`.
+It writes `<state_dir>/last_scoring.json` (inputs' window, scores, funded set, hotkey weights, burn, uid weights) after every
+tempo. Requirements: one CPU core and a validator permit. Docs/04 §3.5 explains what it does and does not attest to.

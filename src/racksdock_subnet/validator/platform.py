@@ -32,8 +32,15 @@ class PlatformClient:
     async def nodes(self) -> list[dict]:
         return self._check(await self.c.get("/v1/validators/nodes"))["nodes"]
 
-    async def create_verify_instance(self, node_id: str, ssh_public_keys: list[str], tenant_nonce: str, name: str = "verify") -> str:
-        return self._check(await self.c.post("/v1/validators/verify-instances", json={"node_id": node_id, "ssh_public_keys": ssh_public_keys, "tenant_nonce": tenant_nonce, "name": name}))["id"]
+    async def create_verify_instance(self, node_id: str, ssh_public_keys: list[str], tenant_nonce: str, name: str = "verify", deployment: str | None = None) -> str:
+        body = {"node_id": node_id, "ssh_public_keys": ssh_public_keys, "tenant_nonce": tenant_nonce, "name": name}
+        if deployment:
+            body["deployment"] = deployment
+        return self._check(await self.c.post("/v1/validators/verify-instances", json=body))["id"]
+
+    async def instances(self) -> list[dict]:
+        """This validator's own instances (verify sessions), live and recent."""
+        return self._check(await self.c.get("/v1/instances"))["instances"]
 
     async def instance(self, instance_id: str) -> dict:
         return self._check(await self.c.get(f"/v1/validators/instances/{instance_id}"))

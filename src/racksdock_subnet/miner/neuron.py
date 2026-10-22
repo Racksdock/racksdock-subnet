@@ -27,6 +27,7 @@ class MinerConfig:
     chain_network: str = "finney"
     wallet_name: str = "default"
     wallet_hotkey: str = "default"
+    wallet_path: str | None = None
     host_seed_path: Path = Path("/var/lib/racksdock-host-agent/host.seed")
     state_dir: Path = Path("/var/lib/racksdock-miner")
     network_gbps: float = 25.0
@@ -38,7 +39,7 @@ class MinerConfig:
         e = os.environ.get
         return cls(platform_url=e("RACKSDOCK_PLATFORM_URL", "http://127.0.0.1:8000"), hotkey=e("RACKSDOCK_HOTKEY", "5Fminer"), netuid=int(e("RACKSDOCK_NETUID", "1")),
                    chain_kind=e("RACKSDOCK_CHAIN", "mock"), chain_file=Path(e("RACKSDOCK_CHAIN_FILE", "./chain.json")), chain_network=e("RACKSDOCK_CHAIN_NETWORK", "finney"),
-                   wallet_name=e("RACKSDOCK_WALLET_NAME", "default"), wallet_hotkey=e("RACKSDOCK_WALLET_HOTKEY", "default"),
+                   wallet_name=e("RACKSDOCK_WALLET_NAME", "default"), wallet_hotkey=e("RACKSDOCK_WALLET_HOTKEY", "default"), wallet_path=e("RACKSDOCK_WALLET_PATH") or None,
                    host_seed_path=Path(e("RACKSDOCK_HOST_SEED", "/var/lib/racksdock-host-agent/host.seed")), state_dir=Path(e("RACKSDOCK_STATE_DIR", "/var/lib/racksdock-miner")),
                    network_gbps=float(e("RACKSDOCK_NETWORK_GBPS", "25")), poll_s=float(e("RACKSDOCK_POLL_S", "2")))
 
@@ -47,7 +48,7 @@ class MinerNeuron:
     def __init__(self, cfg: MinerConfig, host_pubkey: str | None = None):
         self.cfg = cfg
         cfg.state_dir.mkdir(parents=True, exist_ok=True)
-        self.chain = build_chain(cfg.chain_kind, path=cfg.chain_file, netuid=cfg.netuid, network=cfg.chain_network)
+        self.chain = build_chain(cfg.chain_kind, path=cfg.chain_file, netuid=cfg.netuid, network=cfg.chain_network, wallet_name=cfg.wallet_name, wallet_hotkey=cfg.wallet_hotkey, wallet_path=cfg.wallet_path)
         self.host_key: SigningKey | None = SigningKey.load_or_create(cfg.host_seed_path) if cfg.host_seed_path.exists() else None
         self.host_pubkey = host_pubkey or (self.host_key.public.hex if self.host_key else None)
         self.c = httpx.AsyncClient(base_url=cfg.platform_url.rstrip("/"), timeout=60)
@@ -66,14 +67,15 @@ class MinerNeuron:
         except NotImplementedError:
             log.info("register the hotkey with btcli: btcli subnet register --netuid %s", self.cfg.netuid)
 
-    async def bootstrap(self, timeout_s: float = 900) -> RegistrationRecord:
-        """Boot a verify VM via the platform, wait for the identity draft produced by that request, commit, register."""
+    async def bootstrap(self, timeout_s: float = 900, reuse: bool = False) -> RegistrationRecord:
+        """Boot a verify VM via the platform, wait for the identity draft produced by that request, commit, register. reuse=True
+        re-signs the identity this host already proved (no VM): a registered node changing its tier/profile/spec."""
         if not self.host_pubkey:
             raise RuntimeError("host public key unknown: set RACKSDOCK_HOST_SEED or pass --host-pubkey")
         deadline = asyncio.get_running_loop().time() + timeout_s
         # the host-agent may still be connecting; retry while the platform reports it unknown
         while True:
-            r = await self.c.post(f"/v1/miners/bootstrap/{self.host_pubkey}")
+            r = await self.c.post(f"/v1/miners/bootstrap/{self.host_pubkey}", params={"reuse": "true"} if reuse else None)
             if r.status_code < 400:
                 break
             if r.status_code == 404 and asyncio.get_running_loop().time() < deadline:

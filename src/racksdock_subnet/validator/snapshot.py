@@ -41,9 +41,14 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
             checks = inrental_by_instance.get(lease["instance_id"], [])
             mine = [c for c in checks if c["validator_key"] == validator_key]
             observed = mine or checks
-            if observed and all(c["attestation_ok"] and c["gpu_ids_match"] for c in observed):
+            # only this window's checks count (an old failure must not gate a node forever); with none in the window, the latest
+            # check decides the attestation state
+            in_window = [c for c in observed if not c.get("checked_at") or window_start <= _ts(c["checked_at"]) <= window_end]
+            if not in_window and observed:
+                in_window = [max(observed, key=lambda c: c.get("checked_at") or "")]
+            if in_window and all(c["attestation_ok"] and c["gpu_ids_match"] for c in in_window):
                 rented += _overlap_minutes(a0, a1, window_start, window_end)
-            elif observed:
+            elif in_window:
                 last_att_ok = False
         # available minutes: idle time covered by a passed canary in the window or within 6h before it
         cans = canaries_by_node.get(nid, [])
@@ -66,6 +71,6 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
             duplicate_dispute=False, minutes_rented=rented, minutes_available=available, minutes_failed=failed_min,
             minutes_maintenance=tempo_minutes if n.get("maintenance_until") and _ts(n["maintenance_until"]) > window_start else 0.0,
             strikes=strikes, canary_pass_rate_30d=(can_pass / can_total) if can_total else 1.0, registered_block=int(n.get("registered_block") or 0),
-            previously_funded=nid in (previously_funded or set()),
+            previously_funded=nid in (previously_funded or set()), deployment=str((n.get("registration") or {}).get("deployment") or "vm"),
         ))
     return out

@@ -35,7 +35,9 @@ def _ufw_cmd(rule) -> str:
 
 def build_cloud_config(inp: UserDataInput) -> dict:
     write_files = []
-    runcmd: list[str] = []
+    # GPU persistence mode first: without it the driver tears every idle GPU down and each nvidia-smi / CUDA start re-initializes
+    # all of them (seconds per call on an 8-GPU rental, more under VFIO). Harmless where nvidia-smi is absent.
+    runcmd: list[str] = ["nvidia-smi -pm 1 >/dev/null 2>&1 || true"]
 
     if inp.envs:
         lines = "".join(f"export {e.name}={json.dumps(e.value)}\n" for e in inp.envs)

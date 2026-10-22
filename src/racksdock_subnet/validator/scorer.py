@@ -7,6 +7,8 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass, field
 
+from racksdock_subnet.core.profile import deployment_factor
+
 
 @dataclass
 class Params:
@@ -40,6 +42,7 @@ class NodeInputs:
     canary_pass_rate_30d: float
     registered_block: int
     previously_funded: bool = False
+    deployment: str = "vm"         # vm | container | static: container and static tiers score at half (docs/04 §3)
 
 
 @dataclass
@@ -97,9 +100,10 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
         a = min(1.0, (n.minutes_rented + n.minutes_available) / denom)
         pp = min(1.0, max(0.0, (n.perf - p.perf_floor) / (1.0 - p.perf_floor)))
         r = min(1.0, n.minutes_rented / tempo_minutes)
-        s = w_a * a + w_p * pp + w_r * r
+        tier = deployment_factor(n.deployment)
+        s = (w_a * a + w_p * pp + w_r * r) * tier
         res.scores[n.node_id] = round(s, 6)
-        res.details[n.node_id].update({"A": round(a, 4), "P": round(pp, 4), "R": round(r, 4), "S": round(s, 6), "weights": [w_a, w_p, w_r]})
+        res.details[n.node_id].update({"A": round(a, 4), "P": round(pp, 4), "R": round(r, 4), "S": round(s, 6), "weights": [w_a, w_p, w_r], "tier": n.deployment, "tier_factor": tier})
     # hotkey aggregation with soft cap and burn for unfilled slots
     by_hk: dict[str, float] = {}
     for n in funded:

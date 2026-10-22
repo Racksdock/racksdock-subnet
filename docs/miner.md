@@ -9,3 +9,11 @@ The miner neuron (docs/02 §6 steps 1–2, docs/03 §2). Runs on the host image 
 Miners do not serve an axon: validators reach nodes through the platform and the host-agent, never directly. Emissions are credited to the hotkey by the chain.
 
 `RACKSDOCK_CHAIN=subtensor` uses the bittensor SDK with the wallet in `RACKSDOCK_WALLET_NAME`/`RACKSDOCK_WALLET_HOTKEY`; `mock` uses the shared JSON chain of the simulator.
+
+## Registering a new server (current workflow)
+
+1. Register the miner hotkey on the subnet with btcli (`btcli subnet register --netuid <netuid> --network <net> --wallet.name <coldkey> --wallet.hotkey <hotkey>`), on the machine that holds the wallet. GPU servers never hold wallets.
+2. On the server (root): clone the repos and run `DEPLOYMENT=vm|container|dual PLATFORM_URL=http://<platform>:8000 PUBLIC_IP=<ip> PROFILE=<profile> MINER_HOTKEY=<ss58> TRUST_MODE=<prod|dev> REPOS=/root/racksdock bash racksdock-node/host-image/scripts/setup-host.sh`; reboot once for vm/dual (IOMMU + hugepages). The host-agent starts, connects, and syncs the platform's image catalog by itself (no image builds).
+3. Print the host's service key on the server: `set -a; . /etc/racksdock/host-agent.env; set +a; /opt/racksdock/venv/bin/racksdock-host-agent --show-key`.
+4. From the wallet machine: `RACKSDOCK_PLATFORM_URL=http://<platform>:8000 RACKSDOCK_HOTKEY=<ss58> RACKSDOCK_CHAIN=subtensor RACKSDOCK_CHAIN_NETWORK=<net> RACKSDOCK_NETUID=<netuid> RACKSDOCK_WALLET_NAME=<coldkey> RACKSDOCK_WALLET_HOTKEY=<hotkey> racksdock-miner bootstrap --host-pubkey <key from step 3>` (boots a verify instance, derives the GPU identities, commits the registration hash on chain, registers with the platform). `--reuse-identity` later re-signs the same identity after a change of tier, profile or hotkey.
+5. Wait for a verifying validator: admission + full qualification (15–60 min by hardware), then the node is listed; the console shows "waiting for verification" / "verifying" meanwhile.

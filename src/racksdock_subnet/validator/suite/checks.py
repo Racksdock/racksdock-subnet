@@ -1,6 +1,7 @@
 """Qualification checks Q1–Q16 (docs/03 §4). Each check: commands -> parse -> evaluate against spec, reference and thresholds."""
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -75,6 +76,9 @@ async def q3_memory(ctx: Ctx) -> CheckResult:
     r = await ctx.runner.run("sudo docker run --rm --gpus all racksdock/memtest:pinned || racksdock-memtest", timeout=1800)
     kv = P.parse_kv_lines(r.stdout)
     usable = [float(v) for k, v in kv.items() if k.endswith(".usable_gb")]
+    totals = [float(v) for k, v in kv.items() if k.endswith(".total_gb")]
+    if totals:
+        ctx.measured["gpu.vram_gb_total"] = max(totals)
     floor = specdata.hbm_floor_gb(ctx.extra.get("gpu_pci_id", ""), ctx.dev_mode) or ctx.ref("gpu.vram_gb_usable_min") * ctx.floor
     ok = len(usable) == ctx.gpu_count and min(usable) >= floor and kv.get("verify") == "ok"
     if usable:
@@ -115,9 +119,22 @@ async def q6_d2d(ctx: Ctx) -> CheckResult:
 
 
 async def q7_h2d(ctx: Ctx) -> CheckResult:
+    """Host->device bandwidth per GPU. No absolute reference (it depends on the PCIe generation of the platform), but every GPU
+    must be within the node's own median: a GPU on a degraded link (x8 riser, bad slot) shows up as an outlier, as on the 8x4090
+    box where GPU 0 ran at half the others. The PCIe link width/generation is read as supporting evidence."""
     r = await ctx.runner.run("nvbandwidth -t host_to_device_memcpy_ce", timeout=900)
     b = P.parse_nvbandwidth(r.stdout)
-    return CheckResult(id="Q7", name="Host-device bandwidth", passed=True, details={"aggregate_gbps": b["aggregate_gbps"]})
+    per_gpu = [v for v in (b["matrix"][0] if b["matrix"] else []) if v is not None]
+    extra = getattr(getattr(ctx, "profile", None), "extra", None) or {}
+    outlier_floor = float(extra.get("h2d_outlier_floor", specdata.thresholds()["pair_outlier_floor_of_node_median"]))
+    median = sorted(per_gpu)[len(per_gpu) // 2] if per_gpu else 0.0
+    slow = [i for i, v in enumerate(per_gpu) if median and v < median * outlier_floor]
+    links = P.parse_pcie_links((await ctx.runner.run("nvidia-smi --query-gpu=index,pcie.link.width.current,pcie.link.width.max,pcie.link.gen.current,pcie.link.gen.max --format=csv,noheader,nounits")).stdout)
+    narrow = [lnk["index"] for lnk in links if lnk["width_current"] < lnk["width_max"]] if extra.get("pcie_width_check", True) else []
+    ok = not slow and not narrow
+    ctx.measured["h2d_gbps_min"] = min(per_gpu) if per_gpu else 0.0
+    return CheckResult(id="Q7", name="Host-device bandwidth", passed=ok, details={"aggregate_gbps": b["aggregate_gbps"], "per_gpu_gbps": per_gpu, "median_gbps": median,
+                                                                                 "slow_gpus": slow, "narrow_link_gpus": narrow, "links": links})
 
 
 async def q8_collectives(ctx: Ctx) -> CheckResult:
@@ -151,11 +168,11 @@ async def q9_cpu(ctx: Ctx) -> CheckResult:
 
 
 async def q10_ram(ctx: Ctx) -> CheckResult:
-    m = P.parse_meminfo((await ctx.runner.run("cat /proc/meminfo")).stdout)
+    m = P.parse_meminfo((await ctx.runner.run("cat /proc/meminfo; echo CGROUP_LIMIT=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)")).stdout)
     t = P.parse_kv_lines((await ctx.runner.run("racksdock-ramtest --fraction 0.9 || sudo memtester 64G 1", timeout=3600)).stdout)
     ctx.measured["memory_gb"] = m["total_gb"]
     ok = m["total_gb"] >= ctx.ref("memory_gb") * ctx.floor and t.get("verify", "ok") == "ok"
-    return CheckResult(id="Q10", name="RAM", passed=ok, details={"total_gb": round(m["total_gb"], 1), "verify": t.get("verify")})
+    return CheckResult(id="Q10", name="RAM", passed=ok, details={"total_gb": round(m["total_gb"], 1), "verify": t.get("verify"), **({"host_total_gb": round(m["host_total_gb"], 1)} if "host_total_gb" in m else {})})
 
 
 async def q11_nvme(ctx: Ctx, sustained: bool = True) -> CheckResult:
@@ -192,13 +209,43 @@ async def q11_nvme(ctx: Ctx, sustained: bool = True) -> CheckResult:
     return CheckResult(id="Q11", name="NVMe", passed=ok, details=details)
 
 
+def iperf_target(endpoint: str) -> str:
+    """'host' or 'host:port' -> iperf3 client arguments. Several validators sharing one host use one port each: an iperf3
+    server serves a single client at a time and answers others with 'the server is busy running a test'."""
+    host, _, port = endpoint.rpartition(":") if endpoint.count(":") == 1 else (endpoint, "", "")
+    return f"-c {host} -p {port}" if port.isdigit() else f"-c {endpoint}"
+
+
+_IPERF_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _iperf_lock(endpoint: str):
+    """One iperf3 server serves one client at a time: sessions of the same validator take turns per endpoint."""
+    if endpoint not in _IPERF_LOCKS:
+        _IPERF_LOCKS[endpoint] = asyncio.Lock()
+    return _IPERF_LOCKS[endpoint]
+
+
+async def _iperf(ctx: Ctx, args: str, seconds: int, attempts: int = 8) -> dict:
+    """Run one iperf3 direction; a busy server (another validator's test, up to ~2 min) is retried instead of scoring 0."""
+    for i in range(attempts):
+        r = await ctx.runner.run(f"iperf3 -J {args} -t {seconds} -P 8", timeout=seconds + 60)
+        parsed = P.parse_iperf3_json(r.stdout)
+        if not parsed.get("error") or i == attempts - 1:
+            return parsed
+        await asyncio.sleep(min(60, 20 + 10 * i))
+    return parsed
+
+
 async def q12_network(ctx: Ctx, endpoints: list[str] | None = None, seconds: int = 60) -> CheckResult:
     endpoints = endpoints or ctx.extra.get("iperf_endpoints") or ["iperf.racksdock-validator.local"]
     res = []
     for ep in endpoints:
-        up = P.parse_iperf3_json((await ctx.runner.run(f"iperf3 -J -c {ep} -t {seconds} -P 8", timeout=seconds + 60)).stdout)
-        down = P.parse_iperf3_json((await ctx.runner.run(f"iperf3 -J -c {ep} -t {seconds} -P 8 -R", timeout=seconds + 60)).stdout)
-        res.append({"endpoint": ep, "up_gbps": round(up["sent_gbps"], 2), "down_gbps": round(down["received_gbps"], 2), "lost_percent": max(up["lost_percent"], down["lost_percent"])})
+        async with _iperf_lock(ep):
+            up = await _iperf(ctx, iperf_target(ep), seconds)
+            down = await _iperf(ctx, iperf_target(ep) + " -R", seconds)
+        res.append({"endpoint": ep, "up_gbps": round(up["sent_gbps"], 2), "down_gbps": round(down["received_gbps"], 2), "lost_percent": max(up["lost_percent"], down["lost_percent"]),
+                    **({"error": up.get("error") or down.get("error")} if (up.get("error") or down.get("error")) else {})})
     best = max(res, key=lambda x: x["down_gbps"])
     ctx.measured["network.down_gbps"] = best["down_gbps"]
     ctx.measured["network.up_gbps"] = best["up_gbps"]
@@ -247,12 +294,15 @@ async def q15_inference(ctx: Ctx, minutes: int = 10) -> CheckResult:
 FULL_ORDER: list[Callable[[Ctx], Awaitable[CheckResult]]] = [q2_sku, q3_memory, q4_dcgm, q5_topology, q6_d2d, q7_h2d, q8_collectives, q9_cpu, q10_ram, q11_nvme, q12_network, q13_power, q14_training, q15_inference]
 
 
-async def run_suite(ctx: Ctx, kind: str = "full") -> list[CheckResult]:
-    """Runs the checks the profile enables for this kind (docs/03 §4; profile files in core/spec/profiles)."""
+async def run_suite(ctx: Ctx, kind: str = "full", only: set[str] | None = None) -> list[CheckResult]:
+    """Runs the checks the profile enables for this kind (docs/03 §4; profile files in core/spec/profiles).
+    `only` restricts the run to those check ids (targeted retry after a quarantine on a non-identity check)."""
     results = []
     for fn in FULL_ORDER:
         cid = fn.__name__.split("_")[0].upper()
         if not ctx.profile.enabled(cid, kind):
+            continue
+        if only is not None and cid not in only:
             continue
         t0 = time.perf_counter()
         try:

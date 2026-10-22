@@ -137,47 +137,87 @@ class MockChain:
 
 
 class SubtensorChain:
-    """bittensor SDK wrapper. Requires `pip install bittensor`. Methods map 1:1 to MockChain."""
+    """bittensor SDK (>= 11) wrapper; methods map 1:1 to MockChain. Reads go through the SDK's namespaced reads, registrations
+    through a raw `Commitments.set_commitment` call (hotkey-signed, "sha256:..." as one Raw field) and weights through the
+    `set_weights` tool, which conforms them to the subnet's hyperparameters and uses commit-reveal when the subnet runs it.
+    The wallet is optional for read-only use (the platform); miners and validators give wallet name/hotkey/path."""
 
-    def __init__(self, network: str, netuid: int, wallet=None):
+    def __init__(self, network: str, netuid: int, wallet=None, wallet_name: str | None = None, wallet_hotkey: str | None = None, wallet_path: str | None = None):
         import bittensor as bt  # type: ignore
 
         self._bt = bt
-        self.subtensor = bt.subtensor(network=network)
+        self.subtensor = bt.Subtensor(network=network)
         self.netuid = netuid
+        if wallet is None and wallet_name:
+            kw = {"name": wallet_name, "hotkey": wallet_hotkey or "default"}
+            if wallet_path:
+                kw["path"] = wallet_path
+            wallet = bt.Wallet(**kw)
         self.wallet = wallet
 
+    def _need_wallet(self):
+        if self.wallet is None:
+            raise RuntimeError("this operation signs a transaction: set RACKSDOCK_WALLET_NAME / RACKSDOCK_WALLET_HOTKEY")
+        return self.wallet
+
     def current_block(self) -> int:
-        return int(self.subtensor.get_current_block())
+        return int(self.subtensor.block)
+
+    @staticmethod
+    def commitment_info(data: str) -> dict:
+        raw = data.encode()
+        if len(raw) > 128:
+            raise ValueError("commitment data must be at most 128 bytes")
+        return {"fields": [{f"Raw{len(raw)}": "0x" + raw.hex()}]}
 
     def commit(self, hotkey: str, data: str) -> int:
-        self.subtensor.commit(self.wallet, self.netuid, data)
-        return self.current_block()
+        from bittensor import calls  # type: ignore
+
+        wallet = self._need_wallet()
+        call = calls.Commitments.set_commitment(self.netuid, self.commitment_info(data))
+        self.subtensor.submit_call(call, wallet, signer="hotkey")
+        c = self.subtensor.identity.commitment(self.netuid, wallet.hotkey.ss58_address)
+        return int(getattr(c, "block", 0) or 0) or self.current_block()
 
     def commitments(self) -> list[Commitment]:
         out = []
-        meta = self.subtensor.metagraph(self.netuid)
-        for hk in meta.hotkeys:
-            try:
-                data = self.subtensor.get_commitment(self.netuid, meta.hotkeys.index(hk))
-            except Exception:
+        for row in self.subtensor.identity.commitments(self.netuid) or []:
+            data = row.get("commitment") if isinstance(row, dict) else getattr(row, "commitment", None)
+            if not data:
                 continue
-            if data:
-                out.append(Commitment(hk, 0, data))  # block of commitment: query storage if needed
+            hk = row.get("hotkey") if isinstance(row, dict) else getattr(row, "hotkey", "")
+            block = row.get("block") if isinstance(row, dict) else getattr(row, "block", 0)
+            out.append(Commitment(hk, int(block or 0), str(data)))
         return out
 
+    @staticmethod
+    def _stake_float(v) -> float:
+        """Stake as a plain number in the subnet's own unit (alpha on dynamic subnets); Balance objects refuse cross-unit reads."""
+        for attr in ("rao", "alpha", "tao"):
+            try:
+                x = getattr(v, attr)
+            except Exception:
+                continue
+            return float(x) / 1e9 if attr == "rao" else float(x)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float(str(v).replace(",", "").rstrip("Ττ ") or 0.0)
+
     def neurons(self) -> list[Neuron]:
-        meta = self.subtensor.metagraph(self.netuid)
-        return [Neuron(int(u), hk, float(meta.S[i]), bool(meta.validator_permit[i])) for i, (u, hk) in enumerate(zip(meta.uids, meta.hotkeys))]
+        mg = self.subtensor.subnets.metagraph(self.netuid)
+        return [Neuron(int(n.uid), n.hotkey, self._stake_float(getattr(n, "total_stake", 0.0)), bool(getattr(n, "validator_permit", False))) for n in mg.neurons]
 
     def set_weights(self, validator_hotkey: str, weights: dict[int, float]) -> bool:
-        uids = list(weights.keys())
-        vals = [weights[u] for u in uids]
-        ok, _ = self.subtensor.set_weights(wallet=self.wallet, netuid=self.netuid, uids=uids, weights=vals, wait_for_inclusion=True)
-        return bool(ok)
+        wallet = self._need_wallet()
+        total = sum(weights.values()) or 1.0
+        mapping = {int(u): float(w) / total for u, w in weights.items() if w > 0}
+        res = self.subtensor.execute_tool("set_weights", {"netuid": self.netuid, "weights": mapping}, wallet)
+        ok = getattr(res, "ok", None)
+        return bool(ok if ok is not None else res)
 
     def register(self, hotkey: str, is_validator: bool = False, stake: float = 0.0) -> int:
-        raise NotImplementedError("register with btcli")
+        raise NotImplementedError("register with btcli (burned_register)")
 
     def weights_of(self, validator_hotkey: str) -> dict[int, float]:
         raise NotImplementedError
@@ -186,4 +226,4 @@ class SubtensorChain:
 def build_chain(kind: str, **kw) -> ChainClient:
     if kind == "mock":
         return MockChain(kw["path"], netuid=kw.get("netuid", 1), block_time_s=kw.get("block_time_s", 12.0))
-    return SubtensorChain(kw["network"], kw["netuid"], kw.get("wallet"))
+    return SubtensorChain(kw["network"], kw["netuid"], kw.get("wallet"), wallet_name=kw.get("wallet_name"), wallet_hotkey=kw.get("wallet_hotkey"), wallet_path=kw.get("wallet_path"))

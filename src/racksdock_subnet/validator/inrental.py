@@ -13,7 +13,10 @@ from .platform import PlatformClient
 
 log = logging.getLogger("racksdock.validator.inrental")
 
-THROTTLE_MASK = 0x4 | 0x8 | 0x20 | 0x40 | 0x80
+# NVML clocksThrottleReasons bits that mean the GPU is being slowed down by a fault or by the facility: HW slowdown (0x8),
+# SW thermal (0x20), HW thermal (0x40), HW power brake (0x80). NOT 0x4 (SW power cap): every GPU reports it whenever a
+# workload drives it to its power limit; that is normal operation, not a problem (seen as 8 bogus strikes/min on the 8x4090 test).
+THROTTLE_MASK = 0x8 | 0x20 | 0x40 | 0x80
 
 
 async def probe(ip: str, port: int, timeout: float = 3.0) -> tuple[bool, float | None]:
@@ -38,10 +41,16 @@ async def check_instance(cfg, platform: PlatformClient, verifier, lease: dict, n
     ch = Challenge(instance_id=iid, nonce=nonce, fields=fields, validator_key=platform.key.public.hex)
     reachable, _ = await probe(lease["ip"], lease["ssh_port"]) if lease.get("ip") else (None, None)
     try:
-        resp_env = SignedEnvelope.model_validate(await platform.challenge(node_id, ch.model_dump()))
-    except RuntimeError as e:
-        return InRentalCheckResult(node_id=node_id, instance_id=iid, validator_key=platform.key.public.hex, checked_at=utcnow_iso(), attestation_ok=False, gpu_ids_match=False,
-                                   reachable=reachable, error=f"challenge failed: {e}"[:200])
+        raw = await platform.challenge(node_id, ch.model_dump())
+        if not isinstance(raw, dict) or "payload" not in raw:
+            # the host could not reach the node-agent (VM frozen, agent stopped): the platform answers {"error": ...}
+            raise RuntimeError((raw or {}).get("error", "no response") if isinstance(raw, dict) else "malformed response")
+        resp_env = SignedEnvelope.model_validate(raw)
+    except Exception as e:
+        result = InRentalCheckResult(node_id=node_id, instance_id=iid, validator_key=platform.key.public.hex, checked_at=utcnow_iso(), attestation_ok=False,
+                                     gpu_ids_match=False, reachable=reachable, error=f"challenge failed: {e}"[:200])
+        await platform.publish("inrental", result.model_dump(by_alias=True, mode="json"))
+        return result
     errors = []
     expected_signer = lease.get("node_agent_pubkey")
     if not resp_env.verify(expected_signer=expected_signer) or resp_env.kind != "challenge_response":
@@ -70,11 +79,14 @@ async def check_instance(cfg, platform: PlatformClient, verifier, lease: dict, n
     result = InRentalCheckResult(node_id=node_id, instance_id=iid, validator_key=platform.key.public.hex, checked_at=utcnow_iso(), attestation_ok=att_ok, gpu_ids_match=ids_match,
                                  health=health, reachable=reachable, error="; ".join(errors)[:300] if errors else None)
     await platform.publish("inrental", result.model_dump(by_alias=True, mode="json"))
-    # consequences (docs/04 §7)
+    # consequences (docs/04 §7): a lowered power limit is the miner's doing (strike); thermal/HW slowdowns are a facility problem
+    # worth an incident but not a strike per check; ECC faults are hardware incidents.
     if att_ok and not ids_match:
         await platform.incident(iid, "identity_change", "attested GPU set differs from registration", strike=True)
-    elif health is not None and any("throttled" in e or "power limit" in e for e in errors):
+    elif health is not None and any("power limit" in e for e in errors):
         await platform.incident(iid, "power_profile", "; ".join(errors)[:200], strike=True)
+    elif health is not None and any("throttled" in e for e in errors):
+        await platform.incident(iid, "gpu_throttle", "; ".join(errors)[:200], strike=False)
     elif health is not None and any("ECC" in e for e in errors):
         await platform.incident(iid, "gpu_fault", "; ".join(errors)[:200], strike=False)
     return result

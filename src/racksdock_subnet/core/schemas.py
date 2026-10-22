@@ -125,6 +125,8 @@ class UserDataInput(BaseModel):
 class CreateInstanceRequest(BaseModel):
     name: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
     node_id: str = "auto"
+    instance_type: str | None = Field(default=None, description="for node_id 'auto': profile name or shade_instance_type to pick from")
+    deployment: str | None = Field(default=None, description="for node_id 'auto': vm | container")
     region: str | None = None
     os: str | None = None
     ssh_key_ids: list[str] = Field(default_factory=list)
@@ -200,6 +202,7 @@ class RegistrationRecord(BaseModel):
     node_id: str
     gpu_ids: list[str] = Field(min_length=1, max_length=8)
     profile: str = "b300x8"
+    deployment: Literal["vm", "container", "static", "dual"] = "vm"  # how rentals are delivered (docs/01 §10); dual = customer picks vm or container
     miner_hotkey: str
     miner_service_key: str = Field(description="hex ed25519 key the miner's host-agent signs with")
     claimed_spec: ClaimedSpec
@@ -217,6 +220,7 @@ class GpuSpecMeasured(BaseModel):
     model: str = "B300"
     count: int = 8
     vram_gb_usable_min: float = 0
+    vram_gb_total: float = 0  # the card's memory as the driver reports it (0 on records made before this field)
     board_part: str = ""
     vbios: str = ""
     pci_device_id: str = ""
@@ -302,6 +306,7 @@ class QualificationRecord(BaseModel):
     outcome: Literal["pass", "quarantined", "incomplete"]
     failing_checks: list[str] = Field(default_factory=list)
     checks: list[CheckResult] = Field(default_factory=list)
+    retried_checks: list[str] = Field(default_factory=list)  # targeted retry: only these ran now; the rest come from the previous full record
     attestation: AttestationSummary
     spec_measured: SpecMeasured = Field(default_factory=SpecMeasured)
     performance: PerformanceSummary = Field(default_factory=PerformanceSummary)
@@ -404,6 +409,7 @@ class LaunchCommand(BaseModel):
     instance_id: str
     node_id: str
     mode: VmMode
+    deployment: str | None = None  # dual nodes: the tier this rental must use (vm | container); None = the host's current/default tier
     image: str
     image_version: str
     user_data: str
@@ -470,6 +476,7 @@ class HostHeartbeat(BaseModel):
     vm_state: str | None = None
     instance_id: str | None = None
     maintenance_until: str | None = None
+    images: list[str] | None = None  # catalog images present on the host as "<version>:<kind>" (None: host does not report them)
     at: str = Field(default_factory=utcnow_iso)
 
 
@@ -546,7 +553,8 @@ class SpecSummary(BaseModel):
     cpu_model: str = ""
     memory_in_gb: int = 0
     storage_in_gb: int = 0
-    vram_per_gpu_in_gb: float = 0
+    vram_per_gpu_in_gb: float = 0  # validator-verified allocatable floor (GiB)
+    vram_per_gpu_total_gb: float = 0  # the card's memory as the driver reports it
     network_gbps: float = 0
 
 
@@ -557,6 +565,7 @@ class NodeAvailability(BaseModel):
     available: bool
     hourly_price_cents: int
     os_options: list[str]
+    images_by_mode: dict[str, list[str]] = {}  # os names present on the node per tier (vm/container); empty when the host does not report
     spec: SpecSummary
     badges: list[str]
     perf: float
@@ -564,6 +573,10 @@ class NodeAvailability(BaseModel):
     verification_url: str
     funded_slot: bool = True
     operator_owned: bool = False
+    profile: str = "b300x8"
+    instance_type: str = ""
+    deployment: str = "vm"
+    status: str = "registered"  # registered | qualified | quarantined | retired
 
 
 class AttestationView(BaseModel):
@@ -587,11 +600,13 @@ class InstanceConfiguration(BaseModel):
     interconnect: str = "nvlink"
     gpu_type: str = "B300"
     num_gpus: int = 8
-    vram_per_gpu_in_gb: float = 0
+    vram_per_gpu_in_gb: float = 0  # validator-verified allocatable floor (GiB)
+    vram_per_gpu_total_gb: float = 0  # the card's memory as the driver reports it
     network_gbps: float = 0
 
 
 class InstanceInfo(BaseModel):
+    deployment: str = "vm"  # vm | container: the tier this rental runs in
     id: str
     name: str
     status: InstanceStatus

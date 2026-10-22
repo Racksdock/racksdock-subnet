@@ -82,3 +82,30 @@ def test_rtx4090_profile_is_eight_gpu_pcie_and_excludes_checks_geforce_cannot_ru
         assert p.enabled(cid)
     assert p.power_limit_w == 0 and p.sim_pci_id == "10de:2684" and p.extra["fio_size_gb"] == 2
     assert specdata.reference_set(p.reference_set)["values"]["gpu.vram_gb_usable_min"] == 20
+
+
+def test_profile_get_and_deployment_tiers(monkeypatch):
+    from racksdock_subnet.core import profile as pr
+    from racksdock_subnet.core.specdata import approved_gpu_entries
+
+    monkeypatch.setenv(pr.PROFILE_ENV, "b300x8")
+    assert pr.get("a100-dev").gpu_count == 1 and pr.get("rtx4090x8-dev").gpu_count == 8
+    assert pr.get(None).name == "b300x8" and pr.get("no-such-profile").name == "b300x8"  # unknown/empty -> environment default
+    assert pr.deployment_factor("vm") == 1.0 and pr.deployment_factor("container") == 0.5 and pr.deployment_factor("static") == 0.5 and pr.deployment_factor(None) == 1.0
+    ids = {e["pci_device_id"] for e in approved_gpu_entries(dev_mode=True)}
+    assert {"10de:20b5", "10de:2684"} <= ids  # the allowlist spans every profile's SKUs
+
+
+def test_scorer_halves_container_and_static_tiers():
+    import datetime as dt
+
+    from racksdock_subnet.validator.scorer import NodeInputs, Params, score_tempo
+
+    def node(nid, dep):
+        return NodeInputs(node_id=nid, hotkey=f"hk-{nid}", qualified_at=dt.datetime.now(dt.UTC).isoformat(), qualification_outcome="pass", perf=1.0, last_attestation_ok=True, critical_fault=False,
+                          duplicate_dispute=False, minutes_rented=72, minutes_available=0, minutes_failed=0, minutes_maintenance=0, strikes=0, canary_pass_rate_30d=1.0,
+                          registered_block=1, deployment=dep)
+
+    res = score_tempo([node("vm", "vm"), node("ct", "container"), node("st", "static")], dt.datetime.now(dt.UTC), 72, Params(funded_slots=8))
+    assert res.scores["ct"] == res.scores["st"] and abs(res.scores["vm"] - 2 * res.scores["ct"]) < 1e-6
+    assert res.details["ct"]["tier_factor"] == 0.5 and res.details["vm"]["tier"] == "vm"
