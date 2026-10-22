@@ -471,3 +471,28 @@ def test_unanswered_inrental_checks_are_inconclusive_not_failures():
     legacy = {"kind": "inrental", "envelope": {"payload": {"instance_id": "i1", "validator_key": "v", "attestation_ok": False, "gpu_ids_match": False, "checked_at": "2026-10-22T12:30:00Z"}}}
     (d,) = build_inputs([node], [lease], [good_before, legacy], {"n1": {}}, start, end, "v")
     assert d.last_attestation_ok is False
+
+
+def test_a_crashed_session_backs_the_node_off(monkeypatch, tmp_path):
+    """A verification task that raises (host unreachable) stamps last_requal, so the loop does not spawn it again at once."""
+    import asyncio
+    import time
+
+    from racksdock_subnet.validator import neuron as vn
+    from racksdock_subnet.validator.config import ValidatorConfig
+    from racksdock_subnet.verifier.devca import DevCA
+
+    ca = DevCA.create(tmp_path / "ca")
+    monkeypatch.setenv("RACKSDOCK_ROLE", "verifier")
+    monkeypatch.setenv("RACKSDOCK_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("RACKSDOCK_RUNNER", "sim")
+    monkeypatch.setenv("RACKSDOCK_TRUST_MODE", "dev")
+    monkeypatch.setenv("RACKSDOCK_DEV_CA_DIR", str(ca.dir))
+    n = vn.Verifier(ValidatorConfig.from_env())
+
+    async def boom():
+        raise RuntimeError("instance not active after 0s (status error): provider_unreachable")
+
+    t0 = time.time()
+    asyncio.run(n._guard("sha256:dead", boom()))
+    assert n.last_requal["sha256:dead"] >= t0 and "sha256:dead" not in n.busy

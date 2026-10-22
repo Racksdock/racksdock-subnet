@@ -144,6 +144,10 @@ class Verifier:
             await coro
         except Exception as e:
             log.exception("task for %s failed: %s", node_id[:16], e)
+            # a session that could not even start (host unreachable, launch refused) must not be retried on the next loop
+            # iteration: back the node off like a quarantine retry (seen: 48 error instances in two minutes on a dead host)
+            self.last_requal[node_id] = time.time()
+            self._save_state()
         finally:
             self.busy.discard(node_id)
 
@@ -178,10 +182,12 @@ class Verifier:
         log.info("retry of quarantined node %s -> %s %s", node["node_id"][:16], rec.outcome, rec.failing_checks)
 
     async def _requal(self, node: dict) -> None:
-        rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="weekly")
-        self.last_requal[node["node_id"]] = time.time()
-        self._save_state()
-        log.info("weekly requal %s -> %s", node["node_id"][:16], rec.outcome)
+        try:
+            rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="weekly")
+            log.info("weekly requal %s -> %s", node["node_id"][:16], rec.outcome)
+        finally:
+            self.last_requal[node["node_id"]] = time.time()  # pass, quarantine or crash: the next attempt waits the interval
+            self._save_state()
 
     # ------------------------------------------------------------------ scoring
     async def score_and_set_weights(self, now: dt.datetime, tempo_s: float | None = None):
