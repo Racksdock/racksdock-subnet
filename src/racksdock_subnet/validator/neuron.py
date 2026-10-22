@@ -265,9 +265,9 @@ class ValidatorNeuron:
             by_status[n["status"]] = by_status.get(n["status"], 0) + 1
         now = time.time()
         next_canary = min((t - now for t in self.canaries.next_at.values()), default=None)
-        log.info("status: nodes=%d %s | live leases=%d (tenant %d) | busy=%d | next scoring in %ds | next idle canary in %s",
+        log.info("status: nodes=%d %s | live leases=%d (tenant %d) | busy=%d | %s | next idle canary in %s",
                  len(nodes), by_status, len(leases), sum(1 for lease in leases if not lease["is_validator"]), len(self.busy),
-                 int(self.cfg.tempo_s - (now - self.tempo_start)), f"{int(next_canary)}s" if next_canary is not None else "n/a")
+                 "verifier: no scoring" if self.cfg.role == "verifier" else f"next scoring in {int(self.cfg.tempo_s - (now - self.tempo_start))}s", f"{int(next_canary)}s" if next_canary is not None else "n/a")
 
     def stop(self) -> None:
         self._stop.set()
