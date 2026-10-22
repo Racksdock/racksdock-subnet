@@ -18,7 +18,7 @@ from .inrental import check_instance, probe_lease
 from .platform import PlatformClient
 from .qualify import Sessions, qualify_node
 from .scorer import Params, score_tempo
-from .snapshot import build_inputs
+from .snapshot import build_inputs, evidence_window
 from .weights import set_weights
 
 log = logging.getLogger("racksdock.validator")
@@ -187,8 +187,11 @@ class ValidatorNeuron:
         window_start = now - dt.timedelta(seconds=tempo_s)
         nodes = await self.platform.nodes()
         leases = await self.platform.leases(live_only=False)
-        # the newest 1000 records (the ascending default would return the oldest and freeze the scoring window in the past)
-        evidence = [e for e in reversed(await self.platform.evidence(limit=1000, desc="true")) if e["kind"] in ("canary", "inrental", "probe")]
+        # per kind, everything since the window's cut-off (docs/04): the same bounds the platform uses for the light snapshot
+        evidence = []
+        for kind, since in evidence_window(window_start).items():
+            evidence += list(reversed(await self.platform.evidence(kind=kind, since=since, limit=1000, desc="true")))
+        evidence.sort(key=lambda e: e["id"])
         verification = {}
         for n in nodes:
             try:

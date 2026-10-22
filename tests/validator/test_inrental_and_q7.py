@@ -392,3 +392,12 @@ def test_no_attested_availability_pays_nothing_and_fresh_qualification_counts():
     assert a.minutes_available == 21.0
     (b,) = build_inputs([{**base, "qualified_at": "2026-10-21T20:00:00Z"}], [], [], {"n1": {}}, start, end, "v")
     assert b.minutes_available == 0.0  # too old: a canary must vouch for it
+
+
+def test_evidence_window_bounds_are_shared_and_deterministic():
+    import datetime as dt
+
+    from racksdock_subnet.validator.snapshot import evidence_window
+
+    w = evidence_window(dt.datetime(2026, 10, 22, 9, 0, tzinfo=dt.UTC))
+    assert w == {"canary": "2026-10-22T03:00:00Z", "inrental": "2026-10-22T03:00:00Z", "probe": "2026-10-22T09:00:00Z"}

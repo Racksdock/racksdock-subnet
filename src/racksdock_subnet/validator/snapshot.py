@@ -15,6 +15,17 @@ def _overlap_minutes(a0: dt.datetime, a1: dt.datetime, b0: dt.datetime, b1: dt.d
     return max(0.0, (hi - lo).total_seconds() / 60)
 
 
+CANARY_LOOKBACK = dt.timedelta(hours=6)  # a passed canary vouches for idle availability this long (docs/04 §3)
+
+
+def evidence_window(window_start: dt.datetime) -> dict[str, str]:
+    """Which records a scoring window needs, per kind, as ISO `since` cut-offs. Every validator (full or light, and the platform
+    building the light snapshot) fetches with exactly these bounds, so the same window yields the same inputs: a global
+    "newest N records" cut would let probes (one a minute) push the canaries out of reach and make results depend on fetch size."""
+    iso = lambda t: t.isoformat().replace("+00:00", "Z")  # noqa: E731
+    return {"canary": iso(window_start - CANARY_LOOKBACK), "inrental": iso(window_start - CANARY_LOOKBACK), "probe": iso(window_start)}
+
+
 def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], verification: dict[str, dict], window_start: dt.datetime, window_end: dt.datetime,
                  validator_key: str, previously_funded: set[str] | None = None) -> list[NodeInputs]:
     """nodes/leases from the validator endpoints; evidence = canary + inrental + probe records in the window (all validators pooled)."""
