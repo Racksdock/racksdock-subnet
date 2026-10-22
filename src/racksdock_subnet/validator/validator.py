@@ -38,6 +38,48 @@ def score_snapshot(payload: dict, now: dt.datetime | None = None) -> TempoResult
                        utilization_7d=float(payload.get("utilization_7d", 0.0)))
 
 
+def rebuild_inputs(fetch_json, payload: dict) -> list[NodeInputs]:
+    """Rebuild a snapshot's inputs from the PUBLIC endpoints alone (docs/04 §6): nodes, each node's verification page, the lease
+    ledger and the evidence in the shared per-kind window, then the same build_inputs the platform used. fetch_json(path, params)
+    returns parsed JSON. Equal to the snapshot's inputs when the platform told the truth."""
+    import datetime as dt
+
+    from .snapshot import build_inputs, evidence_window
+
+    window_start = dt.datetime.fromisoformat(payload["window_start"])
+    window_end = dt.datetime.fromisoformat(payload["window_end"])
+    nodes, verification = [], {}
+    for row in fetch_json("/v1/nodes", {"include_offline": "true"})["nodes"]:
+        v = fetch_json(f"/v1/nodes/{row['node_id']}/verification", {})
+        verification[row["node_id"]] = v
+        nodes.append({"node_id": row["node_id"], "miner_hotkey": v.get("miner_hotkey"), "status": v.get("status"), "qualified_at": v.get("qualified_at"),
+                      "qualification": v.get("qualification"), "perf": v.get("perf"), "critical_fault": v.get("critical_fault"), "maintenance_until": v.get("maintenance_until"),
+                      "registered_block": v.get("registered_block"), "registration": {"deployment": v.get("deployment")}, "host_connected": v.get("host_connected"),
+                      "offline_since": v.get("offline_since"), "outages": v.get("outages") or []})
+    leases = fetch_json("/v1/leases", {"since": window_start.isoformat()})["leases"]
+    evidence = []
+    for kind, since in evidence_window(window_start).items():
+        evidence += fetch_json("/v1/evidence", {"kind": kind, "since": since, "limit": 1000, "desc": "true"})["records"]
+    evidence.sort(key=lambda e: e["id"])
+    return build_inputs(nodes, leases, evidence, verification, window_start, window_end, "", set(payload.get("previously_funded") or []))
+
+
+def compare_inputs(snapshot_inputs: list[NodeInputs], rebuilt: list[NodeInputs]) -> list[str]:
+    """Field-level differences between two input sets, empty when they agree."""
+    from dataclasses import asdict
+
+    a = {i.node_id: asdict(i) for i in snapshot_inputs}
+    b = {i.node_id: asdict(i) for i in rebuilt}
+    diffs = [f"{n}: only in {'snapshot' if n in a else 'public rebuild'}" for n in sorted(set(a) ^ set(b))]
+    for n in sorted(set(a) & set(b)):
+        for k in a[n]:
+            va, vb = a[n][k], b[n].get(k)
+            same = abs(va - vb) < 1e-6 if isinstance(va, float) and isinstance(vb, float) else va == vb
+            if not same:
+                diffs.append(f"{n[:16]} {k}: snapshot={va!r} public={vb!r}")
+    return diffs
+
+
 class Validator:
     def __init__(self, cfg: ValidatorConfig):
         self.cfg = cfg
@@ -70,6 +112,44 @@ class Validator:
         if env.kind != SNAPSHOT_KIND or not env.verify(expected_signer=pub):
             raise RuntimeError("scoring snapshot signature invalid")
         return env.payload
+
+    async def audit(self) -> list[str]:
+        """Fetch the snapshot, rebuild its inputs from the public endpoints and report every difference (empty = the platform's
+        snapshot is exactly what its public records say)."""
+        payload = await self.fetch_snapshot()
+
+        async def fetch_async(path, params):
+            r = await self.c.get(path, params=params)
+            r.raise_for_status()
+            return r.json()
+
+        # rebuild_inputs is synchronous; run the fetches through a small cache filled up front
+        cache: dict[tuple, dict] = {}
+        nodes = await fetch_async("/v1/nodes", {"include_offline": "true"})
+        cache[("/v1/nodes", (("include_offline", "true"),))] = nodes
+        for row in nodes["nodes"]:
+            cache[(f"/v1/nodes/{row['node_id']}/verification", ())] = await fetch_async(f"/v1/nodes/{row['node_id']}/verification", {})
+        from .snapshot import evidence_window
+
+        ws = payload["window_start"]
+        cache[("/v1/leases", (("since", ws),))] = await fetch_async("/v1/leases", {"since": ws})
+        import datetime as dt
+
+        for kind, since in evidence_window(dt.datetime.fromisoformat(ws)).items():
+            params = {"kind": kind, "since": since, "limit": 1000, "desc": "true"}
+            cache[("/v1/evidence", tuple(sorted((k, str(v)) for k, v in params.items())))] = await fetch_async("/v1/evidence", params)
+
+        def fetch_json(path, params):
+            key = (path, tuple(sorted((k, str(v)) for k, v in params.items())))
+            return cache[key]
+
+        diffs = compare_inputs(inputs_from_snapshot(payload), rebuild_inputs(fetch_json, payload))
+        result = score_snapshot(payload)
+        rounds = (await fetch_async("/v1/scoring/rounds", {"limit": 5}))["rounds"]
+        mine = next((r for r in rounds if r["window_end"] == payload["window_end"]), None)
+        if mine is not None and (mine["funded"] != result.funded or {k: round(v, 8) for k, v in mine["hotkey_weights"].items()} != {k: round(v, 8) for k, v in result.hotkey_weights.items()}):
+            diffs.append(f"platform round for {payload['window_end']}: funded={mine['funded']} weights={mine['hotkey_weights']} vs ours funded={result.funded} weights={result.hotkey_weights}")
+        return diffs
 
     async def score_once(self) -> TempoResult:
         payload = await self.fetch_snapshot()

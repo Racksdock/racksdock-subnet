@@ -9,7 +9,7 @@ The validator neuron (docs/03, docs/04). It never trusts the platform's verdicts
 - `canary.py`: Poisson-scheduled idle canaries and post-rental readiness canaries.
 - `inrental.py`: 10-minute attestation + allowlisted health challenges and reachability probes for tenant instances.
 - `scorer.py`: `score_tempo(snapshot, params)` — the only scoring implementation; `tests/vectors/` holds test vectors every fork must reproduce.
-- `neuron.py`: the verifier loop. `validator.py`: the validator. `cli.py`: `racksdock-validator verify | run | all-in-one | enroll | qualify | canary | score`.
+- `neuron.py`: the verifier loop. `validator.py`: the validator. `cli.py`: `racksdock-validator verify | run | audit | all-in-one | enroll | qualify | canary | score`.
 
 Modes: `RACKSDOCK_RUNNER=ssh|sim`, `RACKSDOCK_TRUST_MODE=prod|dev`, `RACKSDOCK_CHAIN=subtensor|mock`.
 
@@ -24,4 +24,7 @@ Modes: `RACKSDOCK_RUNNER=ssh|sim`, `RACKSDOCK_TRUST_MODE=prod|dev`, `RACKSDOCK_C
   signature against the pinned platform key (`<state_dir>/platform.pub`, or `RACKSDOCK_PLATFORM_PUBKEY`), runs the deterministic
   `score_tempo` and sets weights with its own hotkey; `last_scoring.json` in the state dir records what it submitted. Every
   validator sees the same signed inputs, so their weights are identical.
+- `racksdock-validator audit`: rebuilds the current snapshot from the public endpoints alone and compares it with the signed
+  one, then compares its own weights with the platform's recorded round. Any difference is printed; none means the platform's
+  snapshot is exactly what its public records say.
 - `racksdock-validator all-in-one` (verify + score in one process) remains for simulations and tests only.

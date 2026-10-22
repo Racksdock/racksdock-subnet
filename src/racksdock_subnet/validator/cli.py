@@ -40,6 +40,28 @@ def enroll():
     typer.echo(f"enrolled validator_key={n.key.public.hex} api_key stored in {n.cfg.state_dir / 'api_key'}")
 
 
+@app.command()
+def audit():
+    """Check the platform: rebuild the current scoring snapshot from the public endpoints alone (nodes, verification pages, lease
+    ledger, evidence) and compare, then compare our weights with the platform's own round. Prints the differences; none = honest."""
+    from .validator import Validator
+
+    v = Validator(ValidatorConfig.from_env())
+
+    async def go():
+        try:
+            return await v.audit()
+        finally:
+            await v.c.aclose()
+
+    diffs = asyncio.run(go())
+    if diffs:
+        for d in diffs:
+            typer.echo(f"DIFF {d}")
+        raise typer.Exit(code=1)
+    typer.echo("snapshot matches the public records; weights match the platform's round")
+
+
 @app.command("all-in-one")
 def all_in_one():
     """Verify AND score in one process (the pre-2026-10-22 behaviour): simulations and tests only."""

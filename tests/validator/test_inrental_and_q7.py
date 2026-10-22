@@ -425,3 +425,17 @@ def test_verifier_role_never_builds_a_chain_or_scores(monkeypatch, tmp_path):
     assert n.chain is None
     with pytest.raises(RuntimeError, match="never scores"):
         asyncio.run(n.score_and_set_weights(None))
+
+
+def test_compare_inputs_reports_field_differences():
+    from racksdock_subnet.validator.scorer import NodeInputs
+    from racksdock_subnet.validator.validator import compare_inputs
+
+    def ni(nid, avail):
+        return NodeInputs(node_id=nid, hotkey="hk", qualified_at=None, qualification_outcome="pass", perf=1.0, last_attestation_ok=True, critical_fault=False,
+                          duplicate_dispute=False, minutes_rented=0.0, minutes_available=avail, minutes_failed=0.0, minutes_maintenance=0.0, strikes=0.0,
+                          canary_pass_rate_30d=1.0, registered_block=1)
+
+    assert compare_inputs([ni("a", 21.0)], [ni("a", 21.0)]) == []
+    d = compare_inputs([ni("a", 21.0), ni("b", 0.0)], [ni("a", 20.0)])
+    assert d == ["b: only in snapshot", "a minutes_available: snapshot=21.0 public=20.0"]
