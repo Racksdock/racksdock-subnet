@@ -365,3 +365,30 @@ def test_host_outages_score_as_failed_not_idle_or_rented():
     # no outage data at all: unchanged behaviour
     (d,) = build_inputs([base], [lease], [chk, canary], {"n1": {}}, start, end, "v")
     assert (d.minutes_rented, d.minutes_failed, d.minutes_available) == (60.0, 0.0, 0.0)
+
+
+def test_no_attested_availability_pays_nothing_and_fresh_qualification_counts():
+    """A funded node with neither rented nor attested-available minutes (host offline all tempo) scores 0 even with perfect perf,
+    and the redistribution survives a zero-score hotkey; a node qualified within 6 h is available until its first canary."""
+    import datetime as dt
+
+    from racksdock_subnet.validator.scorer import NodeInputs, Params, score_tempo
+    from racksdock_subnet.validator.snapshot import build_inputs
+
+    now = dt.datetime(2026, 10, 22, 5, 0, tzinfo=dt.UTC)
+
+    def ni(nid, hk, rented, avail):
+        return NodeInputs(node_id=nid, hotkey=hk, qualified_at="2026-10-22T02:38:47Z", qualification_outcome="pass", perf=1.0, last_attestation_ok=True, critical_fault=False,
+                          duplicate_dispute=False, minutes_rented=rented, minutes_available=avail, minutes_failed=0.0, minutes_maintenance=0.0, strikes=0.0,
+                          canary_pass_rate_30d=1.0, registered_block=1, deployment="container")
+
+    res = score_tempo([ni("off", "hk2", 0.0, 0.0), ni("on", "hk3", 0.0, 21.0)], now, 21.0, Params(funded_slots=2))
+    assert res.scores["off"] == 0.0 and "no attested availability in the window" in res.details["off"]["gate_reasons"]
+    assert res.scores["on"] > 0 and res.hotkey_weights.get("hk2", 0.0) == 0.0 and res.hotkey_weights["hk3"] == 0.25 and abs(res.burn - 0.75) < 1e-6
+    # freshly qualified, no canary yet: idle minutes count as available
+    start, end = now - dt.timedelta(minutes=21), now
+    base = {"node_id": "n1", "miner_hotkey": "hk", "status": "qualified", "qualified_at": "2026-10-22T04:50:00Z", "qualification": {"outcome": "pass"}, "perf": 1.0}
+    (a,) = build_inputs([base], [], [], {"n1": {}}, start, end, "v")
+    assert a.minutes_available == 21.0
+    (b,) = build_inputs([{**base, "qualified_at": "2026-10-21T20:00:00Z"}], [], [], {"n1": {}}, start, end, "v")
+    assert b.minutes_available == 0.0  # too old: a canary must vouch for it

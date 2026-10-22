@@ -36,8 +36,8 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
         if n.get("offline_since") and not any(o1 >= window_end for _, o1 in outages):
             outages.append((_ts(n["offline_since"]), window_end))  # dropped but not yet declared an outage: still offline now
 
-        def offline_within(b0: dt.datetime, b1: dt.datetime) -> float:
-            return sum(_overlap_minutes(o0, o1, b0, b1) for o0, o1 in outages)
+        def offline_within(b0: dt.datetime, b1: dt.datetime, _outages=tuple(outages)) -> float:
+            return sum(_overlap_minutes(o0, o1, b0, b1) for o0, o1 in _outages)
 
         offline_total = min(tempo_minutes, offline_within(window_start, window_end))
         # rented minutes: tenant leases overlapping the window whose in-rental checks (ours) passed
@@ -65,6 +65,9 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
         cans = canaries_by_node.get(nid, [])
         failed = [c for c in cans if c["outcome"] in ("fail", "refused") and window_start <= _ts(c["finished_at"]) <= window_end]
         passed = [c for c in cans if c["outcome"] == "pass" and _ts(c["finished_at"]) >= window_start - dt.timedelta(hours=6)]
+        # a passed qualification is at least as strong as a canary: a freshly qualified node is available until its first canary
+        if n.get("status") == "qualified" and n.get("qualified_at") and _ts(n["qualified_at"]) >= window_start - dt.timedelta(hours=6):
+            passed.append({"outcome": "pass", "finished_at": n["qualified_at"], "kind": "qualification"})
         idle = max(0.0, tempo_minutes - rented - offline_total)  # offline minutes are neither rented nor idle-available
         if failed:
             available, failed_min = 0.0, idle

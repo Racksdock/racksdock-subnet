@@ -102,6 +102,10 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
         r = min(1.0, n.minutes_rented / tempo_minutes)
         tier = deployment_factor(n.deployment)
         s = (w_a * a + w_p * pp + w_r * r) * tier
+        if n.minutes_rented + n.minutes_available <= 0:
+            # nothing attested this tempo (host offline, failed canary, no evidence): the performance term alone pays nothing
+            s = 0.0
+            res.details[n.node_id]["gate_reasons"].append("no attested availability in the window")
         res.scores[n.node_id] = round(s, 6)
         res.details[n.node_id].update({"A": round(a, 4), "P": round(pp, 4), "R": round(r, 4), "S": round(s, 6), "weights": [w_a, w_p, w_r], "tier": n.deployment, "tier_factor": tier})
     # hotkey aggregation with soft cap and burn for unfilled slots
@@ -116,7 +120,7 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
     capped = {hk: min(v, cap) for hk, v in by_hk.items()}
     excess = total - sum(capped.values())
     # redistribute excess proportionally among uncapped hotkeys (one pass; remainder burns)
-    uncapped = {hk: v for hk, v in capped.items() if v < cap}
+    uncapped = {hk: v for hk, v in capped.items() if 0 < v < cap}  # a zero-score hotkey cannot absorb anything
     if excess > 0 and uncapped:
         u_total = sum(uncapped.values())
         for hk in uncapped:
