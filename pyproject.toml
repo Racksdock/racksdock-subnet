@@ -12,7 +12,7 @@ dependencies = ["pydantic>=2.5", "cryptography>=42", "pyyaml>=6", "httpx>=0.27",
 
 [project.optional-dependencies]
 validator = ["asyncssh>=2.14"]
-chain = ["bittensor>=9"]
+chain = ["bittensor>=11.3"]
 nvml = ["nvidia-ml-py>=12"]
 test = ["pytest>=8", "pytest-asyncio>=0.23", "asyncssh>=2.14", "racksdock-node", "racksdock-platform", "uvicorn"]
 dev = ["ruff>=0.5"]

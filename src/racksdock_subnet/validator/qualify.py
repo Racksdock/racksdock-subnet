@@ -155,13 +155,57 @@ def merge_measured(base: dict, new: dict) -> dict:
     return out
 
 
+class Progress:
+    """Reports a verification session's steps to the platform as they happen (docs/03 §5.1): plan, start, done, finish.
+    Every call is best effort; the console shows the steps, the signed record stays the source of truth."""
+
+    def __init__(self, platform: PlatformClient, node_id: str, session_kind: str):
+        self.platform = platform
+        self.node_id = node_id
+        self.session_kind = session_kind
+        self.session_id = f"{platform.key.public.hex[:8]}:{utcnow_iso()}"
+
+    def _msg(self, **kw) -> dict:
+        return {"node_id": self.node_id, "session_kind": self.session_kind, "session_id": self.session_id, "validator_key": self.platform.key.public.hex, "at": utcnow_iso(), **kw}
+
+    async def plan(self, step_ids: list[str]) -> None:
+        from .suite.checks import CHECK_NAMES
+
+        await self.platform.progress(self._msg(plan=[{"id": s, "name": CHECK_NAMES.get(s, s)} for s in step_ids]))
+
+    async def start(self, step_id: str, name: str) -> None:
+        await self.platform.progress(self._msg(step_id=step_id, step_name=name, state="running"))
+
+    async def done(self, res: CheckResult) -> None:
+        detail = res.error or ("skipped" if res.skipped else "")
+        if not detail and res.details:
+            detail = ", ".join(f"{k}={v}" for k, v in list(res.details.items())[:4] if not isinstance(v, (dict, list)))[:200]
+        await self.platform.progress(self._msg(step_id=res.id, step_name=res.name, state="skipped" if res.skipped else ("pass" if res.passed else "fail"),
+                                               detail=detail, duration_s=res.duration_s))
+
+    async def finish(self, outcome: str) -> None:
+        await self.platform.progress(self._msg(outcome=outcome))
+
+
 async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions: Sessions, node: dict, kind: str = "full",
                        only: set[str] | None = None, base: dict | None = None) -> QualificationRecord:
+    from .suite.checks import planned_checks
+
     started = utcnow_iso()
     prof = node_profile(node)
-    sess = await sessions.open(node, deadline_s=thresholds()["canary_deadline_s"], name=f"qualify-{kind}")
+    prog = Progress(platform, node["node_id"], kind)
+    await prog.plan(["B0", "Q1"] + [c for c in planned_checks(prof, kind, only) if c != "Q1"])
+    await prog.start("B0", "Boot the verify instance")
+    try:
+        sess = await sessions.open(node, deadline_s=thresholds()["canary_deadline_s"], name=f"qualify-{kind}")
+    except Exception as e:
+        await prog.done(CheckResult(id="B0", name="Boot the verify instance", passed=False, error=str(e)[:200]))
+        await prog.finish("quarantined")
+        raise
+    await prog.done(CheckResult(id="B0", name="Boot the verify instance", passed=True, details={"time_to_active_s": round(sess.time_to_active_s, 1)}))
     checks: list[CheckResult] = [CheckResult(id="Q1", name="GPU authenticity and identity", passed=sess.boot.ok, details={"errors": sess.boot.errors, "gpu_ids": sess.boot.gpu_ids,
                                                                                                                              "measurements_hash": sess.boot.result.measurements_hash if sess.boot.result else None})]
+    await prog.done(checks[0])
     measured: dict[str, float] = {}
     extra: dict = {}
     try:
@@ -170,7 +214,7 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
             ctx = Ctx(runner=runner, reference=cfg.reference_set or prof.reference_set, dev_mode=cfg.trust.dev, claimed_vcpus=int(node["registration"]["claimed_spec"]["vcpus"]), profile=prof)
             ctx.extra["iperf_endpoints"] = list(cfg.iperf_endpoints)
             try:
-                checks += await run_suite(ctx, kind=kind, only=only)
+                checks += await run_suite(ctx, kind=kind, only=only, progress=prog)
             finally:
                 await runner.close()
             measured, extra = ctx.measured, ctx.extra
@@ -208,4 +252,5 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
     )
     await platform.publish("qualification", rec.model_dump(by_alias=True, mode="json"))
     log.info("qualified %s: %s perf=%.3f failing=%s%s", node["node_id"][:16], outcome, perf, failing, f" (re-ran only {retried})" if retried else "")
+    await prog.finish(rec.outcome)
     return rec

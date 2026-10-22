@@ -1,6 +1,8 @@
 """In-rental check robustness and the Q7 host-device outlier check (regressions from the 8x4090 rental)."""
 import asyncio
 
+import pytest
+
 from racksdock_subnet.core.keys import SigningKey
 from racksdock_subnet.validator import inrental
 from racksdock_subnet.validator.suite import parsers as P
@@ -226,5 +228,114 @@ def test_old_failed_in_rental_checks_do_not_gate_a_node_forever():
     assert i.last_attestation_ok is True and abs(i.minutes_rented - 5.0) < 1e-6
     (j,) = build_inputs([node], [lease], old_fail, {"n1": {}}, start, end, "v")  # nothing in the window: the latest check decides
     assert j.last_attestation_ok is False and j.minutes_rented == 0.0
-    (k,) = build_inputs([node], [lease], recent_ok + [chk("2026-10-21T23:59:00Z", False)], {"n1": {}}, start, end, "v")
+    (k,) = build_inputs([node], [lease], [*recent_ok, chk("2026-10-21T23:59:00Z", False)], {"n1": {}}, start, end, "v")
     assert k.last_attestation_ok is False
+
+
+@pytest.mark.asyncio
+async def test_suite_reports_each_step_to_the_progress_hook(monkeypatch):
+    """run_suite tells the progress reporter when a check starts and how it ended; planned_checks lists the same ids."""
+    from racksdock_subnet.core.schemas import CheckResult
+    from racksdock_subnet.validator.suite import checks as ck
+
+    async def q98_fake(ctx):
+        return CheckResult(id="Q98", name="fake ok", passed=True, details={"x": 1})
+
+    async def q99_boom(ctx):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ck, "FULL_ORDER", [q98_fake, q99_boom])
+
+    class Prof:
+        def enabled(self, cid, kind):
+            return True
+
+    class Prog:
+        def __init__(self):
+            self.events = []
+
+        async def start(self, cid, name):
+            self.events.append(("start", cid, name))
+
+        async def done(self, res):
+            self.events.append(("done", res.id, res.passed, res.error))
+
+    class Ctx:
+        profile = Prof()
+
+    prog = Prog()
+    results = await ck.run_suite(Ctx(), kind="full", progress=prog)
+    assert [r.id for r in results] == ["Q98", "Q99"] and results[1].error.startswith("RuntimeError")
+    assert prog.events == [("start", "Q98", "q98_fake"), ("done", "Q98", True, None), ("start", "Q99", "q99_boom"), ("done", "Q99", False, "RuntimeError: boom")]
+    assert ck.planned_checks(Prof(), "full") == ["Q98", "Q99"] and ck.planned_checks(Prof(), "full", only={"Q99"}) == ["Q99"]
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_messages():
+    from racksdock_subnet.core.keys import SigningKey
+    from racksdock_subnet.core.schemas import CheckResult
+    from racksdock_subnet.validator.qualify import Progress
+
+    sent = []
+
+    class FakePlatform:
+        key = SigningKey.generate()
+
+        async def progress(self, payload):
+            sent.append(payload)
+
+    p = Progress(FakePlatform(), "sha256:n", "full")
+    await p.plan(["B0", "Q1", "Q12"])
+    await p.start("Q12", "Network")
+    await p.done(CheckResult(id="Q12", name="Network", passed=False, error="iperf timeout", duration_s=61.0))
+    await p.finish("quarantined")
+    assert [m.get("plan") and len(m["plan"]) for m in sent][0] == 3 and sent[0]["plan"][0] == {"id": "B0", "name": "Boot the verify instance"}
+    assert sent[1]["step_id"] == "Q12" and sent[1]["state"] == "running"
+    assert sent[2]["state"] == "fail" and sent[2]["detail"] == "iperf timeout" and sent[2]["duration_s"] == 61.0
+    assert sent[3]["outcome"] == "quarantined" and all(m["session_id"] == sent[0]["session_id"] for m in sent)
+
+
+def test_q4_records_the_dcgm_runtime_error_and_retries_after_starting_the_engine():
+    """A diag that could not run (host engine down) comes back as JSON with a runtime_error and no tests: Q4 starts the engine,
+    runs once more and, when it still ran nothing, fails with that reason instead of a bare 'missing mandatory' record."""
+    from racksdock_subnet.validator.suite.checks import q4_dcgm
+
+    down = '{"DCGM Diagnostic": {"runtime_error": "Error: unable to establish a connection to the specified host: localhost"}}'
+    good = ('{"DCGM Diagnostic": {"test_categories": [{"category": "Deployment", "tests": [{"name": "Software", "results": [{"status": "Pass"}]}]},'
+            '{"category": "Hardware", "tests": [{"name": "GPU Memory", "results": [{"gpu_ids": "0", "status": "Pass"}]}, {"name": "PCIe", "results": [{"gpu_ids": "0", "status": "Pass"}]}]}]}}')
+
+    class Runner:
+        def __init__(self, second):
+            self.calls, self.second = [], second
+
+        async def run(self, cmd, timeout=None):
+            self.calls.append(cmd)
+            if "dcgmi diag" not in cmd:
+                return CmdResult(0, "nv-hostengine: started\nactive\n")
+            return CmdResult(0, down if len([c for c in self.calls if "dcgmi diag" in c]) == 1 else self.second)
+
+    class Prof:
+        extra = {}
+
+    class Ctx:
+        def __init__(self, runner):
+            self.runner, self.profile, self.measured, self.extra, self.floor = runner, Prof(), {}, {}, 0.9
+
+    rn = Runner(good)
+    res = asyncio.run(q4_dcgm(Ctx(rn), level=2))
+    assert res.passed and sorted(res.details["ran"]) == ["gpumemory", "pcie", "software"] and len(rn.calls) == 3 and "nv-hostengine" in rn.calls[1]
+    rn = Runner(down)
+    res = asyncio.run(q4_dcgm(Ctx(rn), level=2))
+    assert not res.passed and not res.skipped and "unable to establish a connection" in res.error and "active" in res.details["engine"]
+
+
+def test_step_name_table_matches_the_checks():
+    """The console shows CHECK_NAMES while a step runs and the check's own name when it ends: they must agree."""
+    import re
+    from pathlib import Path
+
+    from racksdock_subnet.validator.suite import checks as ck
+
+    src = "".join(Path(ck.__file__).parent.parent.joinpath(f).read_text() for f in ("suite/checks.py", "admission.py"))
+    actual = dict(re.findall(r'CheckResult\(id="([ABQ]\d+)", name="([^"]*)"', src))
+    assert actual and all(ck.CHECK_NAMES[k] == v for k, v in actual.items()), {k: (ck.CHECK_NAMES.get(k), v) for k, v in actual.items() if ck.CHECK_NAMES.get(k) != v}

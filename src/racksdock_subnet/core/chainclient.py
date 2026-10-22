@@ -143,7 +143,12 @@ class SubtensorChain:
     The wallet is optional for read-only use (the platform); miners and validators give wallet name/hotkey/path."""
 
     def __init__(self, network: str, netuid: int, wallet=None, wallet_name: str | None = None, wallet_hotkey: str | None = None, wallet_path: str | None = None):
-        import bittensor as bt  # type: ignore
+        try:
+            import bittensor as bt  # type: ignore
+        except ImportError as e:
+            raise RuntimeError("RACKSDOCK_CHAIN=subtensor needs the bittensor SDK: pip install 'racksdock-subnet[chain]' in this environment. "
+                               "Miners: run `racksdock-miner bootstrap` on the machine that holds your wallet (not on the GPU server); "
+                               "the host-agent itself never needs the SDK or a wallet.") from e
 
         self._bt = bt
         self.subtensor = bt.Subtensor(network=network)

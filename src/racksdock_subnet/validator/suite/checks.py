@@ -89,17 +89,37 @@ async def q3_memory(ctx: Ctx) -> CheckResult:
 
 
 async def q4_dcgm(ctx: Ctx, level: int = 3) -> CheckResult:
-    r = await ctx.runner.run(f"sudo dcgmi diag -r {level} -j", timeout=3 * 3600)
-    try:
-        d = P.parse_dcgm_diag(r.stdout)
-    except ValueError:
-        return CheckResult(id="Q4", name="DCGM diagnostics", passed=False, error="unparseable dcgmi output", details={"stderr": r.stderr[:300]})
+    cmd = f"sudo dcgmi diag -r {level} -j"
+    r = await ctx.runner.run(cmd, timeout=3 * 3600)
+    d = _parse_dcgm(r)
+    if d is not None and not d["tests"]:
+        # nothing ran: the host engine is usually not up (verify container: nv-hostengine started by the init; VM: nvidia-dcgm.service).
+        # Start it and run the diag once more; keep the engine's own log for the record.
+        engine = await ctx.runner.run("sudo -n systemctl start nvidia-dcgm 2>/dev/null || (sudo -n nohup nv-hostengine >/dev/null 2>&1 &); sleep 5; "
+                                      "tail -n 3 /var/log/nv-hostengine.log 2>/dev/null; sudo -n systemctl is-active nvidia-dcgm 2>/dev/null; sudo -n dcgmi discovery -l 2>&1 | head -n 4", timeout=120)
+        r = await ctx.runner.run(cmd, timeout=3 * 3600)
+        d = _parse_dcgm(r)
+        engine_note = (engine.stdout + engine.stderr).strip()[-400:]
+    else:
+        engine_note = None
+    if d is None:
+        return CheckResult(id="Q4", name="DCGM diagnostics", passed=False, error="unparseable dcgmi output", details={"stdout": r.stdout[:300], "stderr": r.stderr[:300], "engine": engine_note})
     default_mandatory = {"memory", "pcie", "targetedstress", "memorybandwidth", "diagnostic"} if level >= 3 else ({"memory", "pcie"} if level == 2 else set())
     mandatory = set(ctx.profile.extra["dcgm_mandatory"]) if "dcgm_mandatory" in ctx.profile.extra else default_mandatory
     missing = sorted(m for m in mandatory if not any(m in name for name in d["ran"]))  # e.g. "memory" matches "gpumemory"
     ok = not d["failed"] and not missing
-    return CheckResult(id="Q4", name="DCGM diagnostics", passed=ok, skipped=bool(missing) and not d["failed"],
-                       details={"failed": d["failed"], "skipped": d["skipped"], "missing_mandatory": missing, "ran": sorted(d["ran"]), "level": level})
+    error = None if ok else (d.get("runtime_error") or ("dcgmi ran no tests" if not d["tests"] else None))
+    details = {"failed": d["failed"], "skipped": d["skipped"], "missing_mandatory": missing, "ran": sorted(d["ran"]), "level": level}
+    if not d["tests"]:
+        details.update({"stdout": r.stdout[:300], "stderr": r.stderr[:200], "engine": engine_note})
+    return CheckResult(id="Q4", name="DCGM diagnostics", passed=ok, skipped=bool(missing) and not d["failed"] and bool(d["tests"]), error=error, details=details)
+
+
+def _parse_dcgm(r) -> dict | None:
+    try:
+        return P.parse_dcgm_diag(r.stdout)
+    except ValueError:
+        return None
 
 
 async def q5_topology(ctx: Ctx) -> CheckResult:
@@ -294,9 +314,29 @@ async def q15_inference(ctx: Ctx, minutes: int = 10) -> CheckResult:
 FULL_ORDER: list[Callable[[Ctx], Awaitable[CheckResult]]] = [q2_sku, q3_memory, q4_dcgm, q5_topology, q6_d2d, q7_h2d, q8_collectives, q9_cpu, q10_ram, q11_nvme, q12_network, q13_power, q14_training, q15_inference]
 
 
-async def run_suite(ctx: Ctx, kind: str = "full", only: set[str] | None = None) -> list[CheckResult]:
+CHECK_NAMES = {
+    "B0": "Boot the verify instance", "Q1": "GPU authenticity and identity", "Q2": "SKU allowlist", "Q3": "GPU memory capacity", "Q4": "DCGM diagnostics",
+    "Q5": "NVLink/NVSwitch topology", "Q6": "GPU-to-GPU bandwidth", "Q7": "Host-device bandwidth", "Q8": "NCCL collectives", "Q9": "CPU", "Q10": "RAM",
+    "Q11": "NVMe", "Q12": "Network", "Q13": "Power and clock profile", "Q14": "Representative training", "Q15": "Representative inference",
+    "A1": "Provision with requester's SSH key", "A2": "Deliver eight registered GPUs", "A3": "Recover without tenant cooperation",
+    "A4": "Clean environment for the next tenant", "A5": "Container mode delivers the same GPUs",
+}
+
+
+def planned_checks(profile, kind: str, only: set[str] | None = None) -> list[str]:
+    """Check ids run_suite will execute for this profile/kind (what a progress view can show up front)."""
+    out = []
+    for fn in FULL_ORDER:
+        cid = fn.__name__.split("_")[0].upper()
+        if profile.enabled(cid, kind) and (only is None or cid in only):
+            out.append(cid)
+    return out
+
+
+async def run_suite(ctx: Ctx, kind: str = "full", only: set[str] | None = None, progress=None) -> list[CheckResult]:
     """Runs the checks the profile enables for this kind (docs/03 §4; profile files in core/spec/profiles).
-    `only` restricts the run to those check ids (targeted retry after a quarantine on a non-identity check)."""
+    `only` restricts the run to those check ids (targeted retry after a quarantine on a non-identity check).
+    `progress` (optional) gets `start(id, name)` / `done(CheckResult)` calls so the platform can show the steps live."""
     results = []
     for fn in FULL_ORDER:
         cid = fn.__name__.split("_")[0].upper()
@@ -304,6 +344,8 @@ async def run_suite(ctx: Ctx, kind: str = "full", only: set[str] | None = None) 
             continue
         if only is not None and cid not in only:
             continue
+        if progress is not None:
+            await progress.start(cid, CHECK_NAMES.get(cid, fn.__name__))
         t0 = time.perf_counter()
         try:
             if fn is q4_dcgm:
@@ -318,6 +360,8 @@ async def run_suite(ctx: Ctx, kind: str = "full", only: set[str] | None = None) 
             res = CheckResult(id=cid, name=fn.__name__, passed=False, error=f"{type(e).__name__}: {e}")
         res.duration_s = round(time.perf_counter() - t0, 3)
         results.append(res)
+        if progress is not None:
+            await progress.done(res)
         if cid in ("Q2", "Q3", "Q5") and not res.passed:
             break  # fail fast on identity/SKU/topology
     return results

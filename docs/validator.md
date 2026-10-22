@@ -22,3 +22,10 @@ runs, and sets weights with `RACKSDOCK_HOTKEY`. Environment: `RACKSDOCK_PLATFORM
 (+ `RACKSDOCK_CHAIN_FILE` for the mock chain, wallet settings for subtensor), `RACKSDOCK_STATE_DIR`, `RACKSDOCK_TEMPO_S`.
 It writes `<state_dir>/last_scoring.json` (inputs' window, scores, funded set, hotkey weights, burn, uid weights) after every
 tempo. Requirements: one CPU core and a validator permit. Docs/04 §3.5 explains what it does and does not attest to.
+
+## Step progress
+
+Every admission and qualification session reports its steps to the platform (`PlatformClient.progress`, `qualify.Progress`:
+plan → running → pass/fail → outcome) so the console can show them live; see docs/03 "live step progress". Best effort: a failed
+report is logged at debug level and never affects the session or the signed record. `Q4` (DCGM) starts the host engine and
+retries once when the first `dcgmi diag` ran no tests, and records DCGM's `runtime_error` as the check's error.

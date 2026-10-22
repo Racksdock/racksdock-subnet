@@ -566,6 +566,7 @@ class NodeAvailability(BaseModel):
     hourly_price_cents: int
     os_options: list[str]
     images_by_mode: dict[str, list[str]] = {}  # os names present on the node per tier (vm/container); empty when the host does not report
+    verification: dict | None = None  # current/last verification session summary (kind, done/total, current step, failed, outcome)
     spec: SpecSummary
     badges: list[str]
     perf: float

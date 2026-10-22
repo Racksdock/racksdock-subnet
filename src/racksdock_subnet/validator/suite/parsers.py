@@ -61,7 +61,9 @@ def parse_dcgm_diag(out: str) -> dict[str, Any]:
             tests[name] = per_gpu
     failed = [n for n, pg in tests.items() if any(s == "fail" for s in pg.values())]
     skipped = [n for n, pg in tests.items() if pg and all(s in ("skip", "skipped", "not run") for s in pg.values())]
-    return {"tests": tests, "failed": failed, "skipped": skipped, "ran": [n for n in tests if n not in skipped]}
+    # dcgmi reports a diag that could not run at all as JSON with a runtime_error and no test_categories (host engine down, no GPUs)
+    err = root.get("runtime_error") or data.get("runtime_error") or root.get("error") or root.get("Error")
+    return {"tests": tests, "failed": failed, "skipped": skipped, "ran": [n for n in tests if n not in skipped], "runtime_error": str(err) if err else None}
 
 
 def parse_nvbandwidth(out: str) -> dict[str, Any]:

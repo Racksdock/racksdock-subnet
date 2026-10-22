@@ -152,9 +152,10 @@ class ValidatorNeuron:
                 log.warning("admission failed for %s: %s", node["node_id"][:16], adm.failing_checks)
                 return
         rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full")
-        if rec.outcome == "pass":
-            self.last_requal[node["node_id"]] = time.time()
-            self._save_state()
+        # whatever the outcome: a quarantined first attempt waits retry_quarantined_s like any other retry (the miner needs time
+        # to fix the node; re-running at once only repeats the failure)
+        self.last_requal[node["node_id"]] = time.time()
+        self._save_state()
 
     async def _requal_full(self, node: dict) -> None:
         """Retry a quarantined node. When the quarantine came from environment checks only (network, disk, CPU, RAM, power), re-run

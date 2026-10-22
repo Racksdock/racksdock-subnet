@@ -1,6 +1,7 @@
 """HTTP client for the marketplace validator endpoints."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -65,6 +66,13 @@ class PlatformClient:
 
     async def strike(self, node_id: str, reason: str, weight: float = 1.0) -> None:
         self._check(await self.c.post("/v1/validators/strikes", json={"node_id": node_id, "reason": reason, "weight": weight}))
+
+    async def progress(self, payload: dict) -> None:
+        """Verification step progress for the console (docs/03 §5.1). Best effort: never fails a session."""
+        try:
+            await self.c.post("/v1/validators/progress", json=payload)
+        except Exception as e:
+            logging.getLogger("racksdock.validator").debug("progress not delivered: %s", e)
 
     async def incident(self, instance_id: str, klass: str, details: str, strike: bool) -> None:
         self._check(await self.c.post("/v1/validators/incidents", json={"instance_id": instance_id, "klass": klass, "details": details, "strike": strike}))
