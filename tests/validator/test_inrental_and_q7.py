@@ -383,15 +383,16 @@ def test_no_attested_availability_pays_nothing_and_fresh_qualification_counts():
                           canary_pass_rate_30d=1.0, registered_block=1, deployment="container")
 
     res = score_tempo([ni("off", "hk2", 0.0, 0.0), ni("on", "hk3", 0.0, 21.0)], now, 21.0, Params(funded_slots=2))
-    assert res.scores["off"] == 0.0 and "no attested availability in the window" in res.details["off"]["gate_reasons"]
-    assert res.scores["on"] > 0 and res.hotkey_weights.get("hk2", 0.0) == 0.0 and res.hotkey_weights["hk3"] == 0.25 and abs(res.burn - 0.75) < 1e-6
+    assert "off" not in res.funded and "no attested availability in the window" in res.details["off"]["gate_reasons"]  # takes no slot
+    # the single funded node is capped at 25 % of its slot's share and the empty second slot burns: 0.125 weight, 0.875 burn
+    assert res.scores["on"] > 0 and res.hotkey_weights.get("hk2", 0.0) == 0.0 and abs(res.hotkey_weights["hk3"] - 0.125) < 1e-6 and abs(res.burn - 0.875) < 1e-6
     # freshly qualified, no canary yet: idle minutes count as available
     start, end = now - dt.timedelta(minutes=21), now
     base = {"node_id": "n1", "miner_hotkey": "hk", "status": "qualified", "qualified_at": "2026-10-22T04:50:00Z", "qualification": {"outcome": "pass"}, "perf": 1.0}
     (a,) = build_inputs([base], [], [], {"n1": {}}, start, end, "v")
     assert a.minutes_available == 21.0
-    (b,) = build_inputs([{**base, "qualified_at": "2026-10-21T20:00:00Z"}], [], [], {"n1": {}}, start, end, "v")
-    assert b.minutes_available == 0.0  # too old: a canary must vouch for it
+    (b,) = build_inputs([{**base, "qualified_at": "2026-10-21T14:00:00Z"}], [], [], {"n1": {}}, start, end, "v")
+    assert b.minutes_available == 0.0  # older than the look-back: a canary must vouch for it
 
 
 def test_evidence_window_bounds_are_shared_and_deterministic():
@@ -400,4 +401,4 @@ def test_evidence_window_bounds_are_shared_and_deterministic():
     from racksdock_subnet.validator.snapshot import evidence_window
 
     w = evidence_window(dt.datetime(2026, 10, 22, 9, 0, tzinfo=dt.UTC))
-    assert w == {"canary": "2026-10-22T03:00:00Z", "inrental": "2026-10-22T03:00:00Z", "probe": "2026-10-22T09:00:00Z"}
+    assert w == {"canary": "2026-10-21T21:00:00Z", "inrental": "2026-10-21T21:00:00Z", "probe": "2026-10-22T09:00:00Z"}

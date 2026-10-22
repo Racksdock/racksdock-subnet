@@ -15,7 +15,7 @@ def _overlap_minutes(a0: dt.datetime, a1: dt.datetime, b0: dt.datetime, b1: dt.d
     return max(0.0, (hi - lo).total_seconds() / 60)
 
 
-CANARY_LOOKBACK = dt.timedelta(hours=6)  # a passed canary vouches for idle availability this long (docs/04 §3)
+CANARY_LOOKBACK = dt.timedelta(hours=12)  # a passed canary (or qualification) vouches for idle availability this long: twice the mean canary interval, so an idle node does not drop out of funding between canaries (docs/04 §3)
 
 
 def evidence_window(window_start: dt.datetime) -> dict[str, str]:
@@ -72,12 +72,12 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
                 rented += max(0.0, _overlap_minutes(a0, a1, window_start, window_end) - gone)
             elif in_window:
                 last_att_ok = False
-        # available minutes: idle time covered by a passed canary in the window or within 6h before it; offline time never counts
+        # available minutes: idle time covered by a passed canary in the window or within the look-back before it; offline time never counts
         cans = canaries_by_node.get(nid, [])
         failed = [c for c in cans if c["outcome"] in ("fail", "refused") and window_start <= _ts(c["finished_at"]) <= window_end]
-        passed = [c for c in cans if c["outcome"] == "pass" and _ts(c["finished_at"]) >= window_start - dt.timedelta(hours=6)]
+        passed = [c for c in cans if c["outcome"] == "pass" and _ts(c["finished_at"]) >= window_start - CANARY_LOOKBACK]
         # a passed qualification is at least as strong as a canary: a freshly qualified node is available until its first canary
-        if n.get("status") == "qualified" and n.get("qualified_at") and _ts(n["qualified_at"]) >= window_start - dt.timedelta(hours=6):
+        if n.get("status") == "qualified" and n.get("qualified_at") and _ts(n["qualified_at"]) >= window_start - CANARY_LOOKBACK:
             passed.append({"outcome": "pass", "finished_at": n["qualified_at"], "kind": "qualification"})
         idle = max(0.0, tempo_minutes - rented - offline_total)  # offline minutes are neither rented nor idle-available
         if failed:
