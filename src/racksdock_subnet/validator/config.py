@@ -15,7 +15,7 @@ class ValidatorConfig:
     hotkey: str = "5Gvalidator"
     netuid: int = 1
     chain_kind: str = "mock"
-    role: str = "validator"  # validator: verify + score + set weights | verifier: verify only (the platform's own verifier; no wallet, no chain)
+    role: str = "all"  # verifier: verify only (the platform's verifier; no wallet, no chain) | all: verify + score in one process (simulations)
     chain_file: Path = Path("./chain.json")
     chain_network: str = "finney"
     wallet_name: str = "default"
@@ -35,7 +35,7 @@ class ValidatorConfig:
     requal_interval_s: float = 7 * 86400
     retry_quarantined_s: float = 3600
     tempo_s: float = 72 * 60
-    platform_pubkey: str | None = None  # light validators: pin the platform's signing key (default: pinned on first contact in state_dir)
+    platform_pubkey: str | None = None  # validators: pin the platform's signing key (default: pinned on first contact in state_dir)
     loop_interval_s: float = 10
     qualification_full: bool = True
     trust: TrustConfig = field(default_factory=TrustConfig.from_env)
@@ -49,7 +49,7 @@ class ValidatorConfig:
         c = cls(
             platform_url=e("RACKSDOCK_PLATFORM_URL", "http://127.0.0.1:8000"), api_key=e("RACKSDOCK_API_KEY"),
             state_dir=Path(e("RACKSDOCK_STATE_DIR", "~/.racksdock-validator")).expanduser(), hotkey=e("RACKSDOCK_HOTKEY", "5Gvalidator"),
-            netuid=int(e("RACKSDOCK_NETUID", "1")), chain_kind=e("RACKSDOCK_CHAIN", "mock"), role=e("RACKSDOCK_ROLE", "validator"), chain_file=Path(e("RACKSDOCK_CHAIN_FILE", "./chain.json")),
+            netuid=int(e("RACKSDOCK_NETUID", "1")), chain_kind=e("RACKSDOCK_CHAIN", "mock"), role=e("RACKSDOCK_ROLE", "all"), chain_file=Path(e("RACKSDOCK_CHAIN_FILE", "./chain.json")),
             chain_network=e("RACKSDOCK_CHAIN_NETWORK", "finney"), runner=e("RACKSDOCK_RUNNER", "ssh"), ssh_user=e("RACKSDOCK_SSH_USER", "ubuntu"),
             sim_profile=Path(e("RACKSDOCK_SIM_PROFILE")) if e("RACKSDOCK_SIM_PROFILE") else None, reference_set=e("RACKSDOCK_REFERENCE_SET", ""),
             iperf_endpoints=tuple(x.strip() for x in e("RACKSDOCK_IPERF_ENDPOINTS", "iperf.racksdock-validator.local").split(",") if x.strip()),

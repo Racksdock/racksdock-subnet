@@ -24,7 +24,7 @@ from .weights import set_weights
 log = logging.getLogger("racksdock.validator")
 
 
-class ValidatorNeuron:
+class Verifier:
     def __init__(self, cfg: ValidatorConfig):
         self.cfg = cfg
         cfg.state_dir.mkdir(parents=True, exist_ok=True)
@@ -186,7 +186,7 @@ class ValidatorNeuron:
     # ------------------------------------------------------------------ scoring
     async def score_and_set_weights(self, now: dt.datetime, tempo_s: float | None = None):
         if self.chain is None:
-            raise RuntimeError("a verifier (RACKSDOCK_ROLE=verifier) never scores or sets weights; run `racksdock-validator light` for that")
+            raise RuntimeError("a verifier (RACKSDOCK_ROLE=verifier) never scores or sets weights; validators run `racksdock-validator run`")
         tempo_s = tempo_s or self.cfg.tempo_s
         window_start = now - dt.timedelta(seconds=tempo_s)
         nodes = await self.platform.nodes()
@@ -239,7 +239,7 @@ class ValidatorNeuron:
 
         prof = current_profile()
         log.info("%s started: key=%s hotkey=%s platform=%s profile=%s runner=%s trust=%s tempo=%ss canary_mean=%ss inrental=%ss",
-                 "verifier" if self.cfg.role == "verifier" else "validator", self.key.public.hex[:12], self.cfg.hotkey, self.cfg.platform_url, prof.name, self.cfg.runner, self.cfg.trust.mode,
+                 "verifier" if self.cfg.role == "verifier" else "all-in-one (verify + score; simulations only)", self.key.public.hex[:12], self.cfg.hotkey, self.cfg.platform_url, prof.name, self.cfg.runner, self.cfg.trust.mode,
                  int(self.cfg.tempo_s), int(self.cfg.canary_mean_interval_s), int(self.cfg.inrental_interval_s))
         last_status = 0.0
         while not self._stop.is_set():
@@ -271,3 +271,6 @@ class ValidatorNeuron:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+ValidatorNeuron = Verifier  # former name (the verifier used to score as well); kept for older scripts

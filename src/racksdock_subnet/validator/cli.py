@@ -8,27 +8,25 @@ import logging
 import typer
 
 from .config import ValidatorConfig
-from .neuron import ValidatorNeuron
+from .neuron import Verifier
 
 app = typer.Typer(help="racksdock validator")
 
 
-def _neuron() -> ValidatorNeuron:
+def _neuron() -> Verifier:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    return ValidatorNeuron(ValidatorConfig.from_env())
+    return Verifier(ValidatorConfig.from_env())
 
 
 @app.command()
-def light():
-    """Run a light validator: fetch the platform-signed scoring snapshot every tempo, run the deterministic scorer, set weights.
-    No SSH key, no API key, no verify sessions (docs/04 §6)."""
-    from .light import LightValidator
+def run():
+    """Run a validator: fetch the platform-signed scoring snapshot every tempo, run the deterministic scorer, set weights.
+    Needs a wallet with the validator hotkey and nothing else (docs/04 §6)."""
+    from .validator import Validator
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    v = LightValidator(ValidatorConfig.from_env())
+    v = Validator(ValidatorConfig.from_env())
     try:
         asyncio.run(v.run())
     except KeyboardInterrupt:
@@ -42,8 +40,9 @@ def enroll():
     typer.echo(f"enrolled validator_key={n.key.public.hex} api_key stored in {n.cfg.state_dir / 'api_key'}")
 
 
-@app.command()
-def run():
+@app.command("all-in-one")
+def all_in_one():
+    """Verify AND score in one process (the pre-2026-10-22 behaviour): simulations and tests only."""
     n = _neuron()
     try:
         asyncio.run(n.run())
@@ -54,7 +53,7 @@ def run():
 @app.command()
 def verify():
     """Run the platform's verifier: admission tests, qualification suite, canaries and in-rental checks, publishing signed
-    records. No scoring, no weights, no wallet: validators run `racksdock-validator light` and score from the platform's snapshot."""
+    records. No scoring, no weights, no wallet: validators (`racksdock-validator run`) score from the platform's snapshot."""
     import os
 
     os.environ["RACKSDOCK_ROLE"] = "verifier"

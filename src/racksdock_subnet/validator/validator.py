@@ -1,6 +1,6 @@
-"""Light validator (docs/04 §6): no SSH, no verify sessions. Every tempo it fetches the platform-signed scoring snapshot (what
-the verifying validators observed per node), checks the signature against the pinned platform key, runs the same deterministic
-scorer and sets weights with its own hotkey. It attests to the platform's verification, not to the nodes themselves."""
+"""The validator (docs/04 §6): no SSH, no verify sessions. Every tempo it fetches the platform-signed scoring snapshot (what
+the verifier observed per node), checks the signature against the pinned platform key, runs the deterministic scorer and sets
+weights with its own hotkey. It attests to the platform's verification, not to the nodes themselves."""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +18,7 @@ from .config import ValidatorConfig
 from .scorer import NodeInputs, Params, TempoResult, score_tempo
 from .weights import set_weights
 
-log = logging.getLogger("racksdock.validator.light")
+log = logging.getLogger("racksdock.validator")
 SNAPSHOT_KIND = "scoring_snapshot"
 
 
@@ -28,7 +28,7 @@ def inputs_from_snapshot(payload: dict) -> list[NodeInputs]:
 
 
 def score_snapshot(payload: dict, now: dt.datetime | None = None) -> TempoResult:
-    """The deterministic part: the same scorer the verifying validator runs, over the snapshot's inputs and parameters."""
+    """The deterministic part: the public scorer over the snapshot's inputs and parameters."""
     now = now or dt.datetime.fromisoformat(payload["window_end"])
     inputs = inputs_from_snapshot(payload)
     prev = set(payload.get("previously_funded") or [])
@@ -38,7 +38,7 @@ def score_snapshot(payload: dict, now: dt.datetime | None = None) -> TempoResult
                        utilization_7d=float(payload.get("utilization_7d", 0.0)))
 
 
-class LightValidator:
+class Validator:
     def __init__(self, cfg: ValidatorConfig):
         self.cfg = cfg
         cfg.state_dir.mkdir(parents=True, exist_ok=True)
@@ -77,17 +77,17 @@ class LightValidator:
         weights = set_weights(self.chain, self.cfg.hotkey, result)
         (self.cfg.state_dir / "last_scoring.json").write_text(json.dumps({"window_end": payload["window_end"], "scores": result.scores, "funded": result.funded,
                                                                             "hotkey_weights": result.hotkey_weights, "burn": result.burn, "weights": {str(k): v for k, v in weights.items()}}, indent=1))
-        log.info("light scoring: %d node(s), funded %s, burn %.4f, weights %s", len(result.scores), [n[:16] for n in result.funded], result.burn, weights)
+        log.info("scoring: %d node(s), funded %s, burn %.4f, weights %s", len(result.scores), [n[:16] for n in result.funded], result.burn, weights)
         return result
 
     async def run(self) -> None:
-        log.info("light validator started: hotkey=%s platform=%s tempo=%ss", self.cfg.hotkey, self.cfg.platform_url, int(self.cfg.tempo_s))
+        log.info("validator started: hotkey=%s platform=%s tempo=%ss", self.cfg.hotkey, self.cfg.platform_url, int(self.cfg.tempo_s))
         while not self._stop.is_set():
             t0 = time.time()
             try:
                 await self.score_once()
             except Exception as e:
-                log.warning("light scoring failed: %s", str(e)[:300])
+                log.warning("scoring failed: %s", str(e)[:300])
             delay = max(5.0, self.cfg.tempo_s - (time.time() - t0))
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)

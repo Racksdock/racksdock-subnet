@@ -180,10 +180,10 @@ def test_sessions_verifier_matches_the_node_gpu_count(tmp_path):
     assert v8.expected == 8 and v1.expected == 1 and v1 is not v8
 
 
-def test_light_validator_scores_a_snapshot_deterministically(tmp_path):
-    """Two light validators with the same snapshot set identical weights; the mock chain maps hotkeys to uids and burns the rest."""
+def test_validators_score_a_snapshot_deterministically(tmp_path):
+    """Two validators with the same snapshot set identical weights; the mock chain maps hotkeys to uids and burns the rest."""
     from racksdock_subnet.core.chainclient import build_chain
-    from racksdock_subnet.validator.light import score_snapshot
+    from racksdock_subnet.validator.validator import score_snapshot
     from racksdock_subnet.validator.weights import set_weights
 
     now = "2026-10-22T02:00:00+00:00"
@@ -421,7 +421,7 @@ def test_verifier_role_never_builds_a_chain_or_scores(monkeypatch, tmp_path):
     cfg = ValidatorConfig.from_env()
     assert cfg.role == "verifier"
     monkeypatch.setattr(vn, "build_chain", lambda *a, **k: (_ for _ in ()).throw(AssertionError("chain built for a verifier")))
-    n = vn.ValidatorNeuron(cfg)
+    n = vn.Verifier(cfg)
     assert n.chain is None
     with pytest.raises(RuntimeError, match="never scores"):
         asyncio.run(n.score_and_set_weights(None))

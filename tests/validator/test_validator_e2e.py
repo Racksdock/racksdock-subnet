@@ -16,7 +16,7 @@ from racksdock_subnet.core.keys import SigningKey
 from racksdock_subnet.core.nonce import new_nonce_hex
 from racksdock_subnet.core.schemas import RegistrationRecord, VmResources
 from racksdock_subnet.validator.config import ValidatorConfig
-from racksdock_subnet.validator.neuron import ValidatorNeuron
+from racksdock_subnet.validator.neuron import Verifier
 from racksdock_subnet.verifier.config import TrustConfig
 from racksdock_subnet.verifier.devca import DevCA
 
@@ -65,7 +65,7 @@ async def test_validator_neuron_end_to_end(tmp_path):
     vcfg = ValidatorConfig(platform_url=base, state_dir=tmp_path / "vstate", hotkey="5Gval", chain_kind="mock", chain_file=tmp_path / "chain.json", runner="sim",
                            canary_mean_interval_s=2.0, canary_deadline_s=60, inrental_interval_s=0.0, microbench_interval_s=0.0, reachability_interval_s=0.0,
                            requal_interval_s=10 ** 9, tempo_s=10 ** 9, loop_interval_s=0.2, trust=trust)
-    neuron = ValidatorNeuron(vcfg)
+    neuron = Verifier(vcfg)  # role 'all': verifies and scores in one process, as the e2e simulation needs
     try:
         async with httpx.AsyncClient(base_url=base, timeout=30) as c:
             await wait_for(lambda: host.key.public.hex in app.state.hosts.by_key, desc="host connected")
