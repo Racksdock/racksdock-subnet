@@ -580,6 +580,8 @@ class NodeAvailability(BaseModel):
     deployment: str = "vm"
     status: str = "registered"  # registered | qualified | quarantined | retired
     host_connected: bool = True  # False: the host agent is unreachable; such a node is listed only while a tenant rents it
+    region_source: str = "claimed"  # geoip: detected by the platform from the host agent's address | claimed: typed by the miner
+    location: dict | None = None  # {country, country_code, continent_code, city, lat, lon, detected_at} when detected
     readiness_pending: bool = False  # after a rental or an outage: the validator's readiness canary has not passed yet
     offline_since: str | None = None
 
