@@ -19,7 +19,7 @@ Modes: `RACKSDOCK_RUNNER=ssh|sim`, `RACKSDOCK_TRUST_MODE=prod|dev`, `RACKSDOCK_C
   platform, enrolled with its own key. Runs admission tests, the qualification suite, canaries and in-rental checks and publishes
   the signed records. It never scores, never sets weights and needs no wallet or chain access. Enrolment of further verifier keys
   is closed (`RACKSDOCK_VALIDATOR_ENROLL=0`).
-- **Validators** (`racksdock-validator run`, class `Validator` in `validator.py`): every subnet validator, the owner's included.
+- **Validators** (`racksdock-validator run`, class `Validator` in `validator.py`): every subnet validator; the platform team runs one like everybody else.
   Needs no SSH key, no API key and no node access: every `RACKSDOCK_TEMPO_S` it fetches `GET /v1/scoring/snapshot`, checks the
   signature against the pinned platform key (`<state_dir>/platform.pub`, or `RACKSDOCK_PLATFORM_PUBKEY`), runs the deterministic
   `score_tempo` and sets weights with its own hotkey; `last_scoring.json` in the state dir records what it submitted. Every
