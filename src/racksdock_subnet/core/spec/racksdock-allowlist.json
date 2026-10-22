@@ -4,26 +4,39 @@
   "notes": "Entries without 'sim' are production placeholders marked to_confirm in docs/06. Entries with sim=true are accepted only when RACKSDOCK_TRUST_MODE=dev.",
   "gpus": [
     {
-      "pci_device_id": "10de:TBD",
-      "to_confirm": true,
-      "board_part_numbers": [],
-      "vbios_min": "",
-      "vbios_max": "",
-      "hbm_usable_floor_gb": 0,
+      "pci_device_id": "10de:3182",
+      "to_confirm": false,
+      "board_part_numbers": [
+        "692-2G540-0216-000"
+      ],
+      "vbios_min": "97.10.00.00.00",
+      "vbios_max": "97.99.99.99.99",
+      "hbm_usable_floor_gb": 250,
       "arch": "blackwell",
-      "hwmodel_patterns": ["B300"]
+      "hwmodel_patterns": [
+        "B300"
+      ],
+      "notes": "NVIDIA B300 SXM6 AC, confirmed from the first real node 2026-10-22"
     },
     {
       "pci_device_id": "10de:b300",
       "sim": true,
-      "board_part_numbers": ["SIM-B300-8GPU"],
+      "board_part_numbers": [
+        "SIM-B300-8GPU"
+      ],
       "vbios_min": "99.00.00.00.00",
       "vbios_max": "99.99.99.99.99",
       "hbm_usable_floor_gb": 260,
       "arch": "blackwell",
-      "hwmodel_patterns": ["SIM-B300"]
+      "hwmodel_patterns": [
+        "SIM-B300"
+      ]
     }
   ],
-  "power_profile": {"gpu_power_limit_w": 0, "to_confirm": true, "sim_gpu_power_limit_w": 1400},
+  "power_profile": {
+    "gpu_power_limit_w": 0,
+    "to_confirm": true,
+    "sim_gpu_power_limit_w": 1400
+  },
   "signed_by": "catalog manifest"
 }

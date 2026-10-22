@@ -20,18 +20,31 @@ def parse_board_parts(nvidia_smi_q: str) -> list[str]:
 
 
 def parse_topo(out: str, expected_gpus: int = 8) -> dict[str, Any]:
-    """nvidia-smi topo -m: count NVLink (NVxx) pairs among GPUs."""
+    """nvidia-smi topo -m: count NVLink (NVxx) pairs among GPUs. Only the GPU columns count: an HGX lists its NICs in the same
+    matrix (mlx5_*, NIC0 ...) and those cells are PIX/NODE/SYS by nature (seen on the first real B300: 40 NIC cells read as
+    'non-NVLink pairs' and failed a fully NVLinked node)."""
     gpus = 0
     nv_pairs = 0
     other = 0
+    gpu_cols: list[int] | None = None
     for line in out.splitlines():
-        if not line.startswith("GPU"):
-            continue
         cells = line.split()
-        if len(cells) < 2:
+        if not cells:
+            continue
+        if gpu_cols is None and cells[0].startswith("GPU") and not line.startswith("GPU"):
+            # header: "        GPU0  GPU1 ... NIC0 ... CPU Affinity ..." -> positions of the GPU columns
+            gpu_cols = [i for i, c in enumerate(cells) if c.startswith("GPU")]
+            continue
+        if not line.startswith("GPU") or len(cells) < 2:
             continue
         gpus += 1
-        for cell in cells[1:]:
+        cols = gpu_cols if gpu_cols else list(range(len(cells) - 1))
+        for i in cols:
+            if i + 1 >= len(cells):
+                continue
+            cell = cells[i + 1]
+            if cell == "X":
+                continue
             if cell.startswith("NV"):
                 nv_pairs += 1
             elif cell in ("SYS", "NODE", "PHB", "PXB", "PIX"):

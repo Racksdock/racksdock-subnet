@@ -87,3 +87,18 @@ def test_suite_passes_on_healthy_profile_and_quarantines_degraded():
     assert "Q14" not in wk and "Q4" in wk and "Q6" in wk
     sm = run(smoke(Ctx(runner=SimRunner(), reference="ref_dev_v0", dev_mode=True, claimed_vcpus=0)))
     assert sm["marker"] == "absent" and sm["nccl_wrong"] == 0 and sm["gpu_memory_verify"] == "ok"
+
+
+def test_topo_counts_only_gpu_columns():
+    """An HGX matrix lists NICs beside the GPUs; their PIX/NODE/SYS cells must not count as non-NVLink GPU pairs (first real B300)."""
+    header = "        " + "  ".join(f"GPU{i}" for i in range(8)) + "  NIC0  NIC1  NIC2  NIC3  NIC4  CPU Affinity  NUMA Affinity  GPU NUMA ID\n"
+    rows = []
+    for i in range(8):
+        cells = ["X" if j == i else "NV18" for j in range(8)] + ["PIX" if i % 2 == 0 else "NODE", "SYS", "SYS", "NODE", "SYS", "0-55", "0", "N/A"]
+        rows.append(f"GPU{i}    " + "  ".join(cells) + "\n")
+    legend = "\nLegend:\n\n  X    = Self\n  SYS  = Connection traversing PCIe as well as the SMP interconnect\n  NV#  = Connection traversing a bonded set of # NVLinks\n"
+    t = P.parse_topo(header + "".join(rows) + legend, expected_gpus=8)
+    assert t == {"gpus": 8, "nvlink_pairs": 56, "non_nvlink_pairs": 0, "full_nvlink": True}
+    # a PCIe-only box (the 8x4090) is still not fully NVLinked
+    rows_pcie = [f"GPU{i}    " + "  ".join("X" if j == i else "SYS" for j in range(8)) + "  0-127  0  N/A\n" for i in range(8)]
+    assert P.parse_topo(header + "".join(rows_pcie), expected_gpus=8)["full_nvlink"] is False
