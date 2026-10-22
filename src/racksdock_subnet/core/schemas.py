@@ -579,6 +579,7 @@ class NodeAvailability(BaseModel):
     deployment: str = "vm"
     status: str = "registered"  # registered | qualified | quarantined | retired
     host_connected: bool = True  # False: the host agent is unreachable; such a node is listed only while a tenant rents it
+    readiness_pending: bool = False  # after a rental or an outage: the validator's readiness canary has not passed yet
     offline_since: str | None = None
 
 
