@@ -1,0 +1,29 @@
+{
+  "schema": "racksdock.reference.v1",
+  "name": "ref_b300_v1",
+  "platform": "hgx-b300-sxm6-ac",
+  "catalog_release": "v2026.10.2",
+  "notes": "PROVISIONAL, one node: GPU-side values measured on the first real HGX 8xB300 SXM6 AC (node sha256:93556c6d..., 2026-10-22, Docker tier, verify_v2026.10.2). Host-side values (CPU STREAM, NVMe, network) come from that cloud instance (network-backed data volume, network test bounded by the platform's own uplink) and are floors, not targets. training/inference are placeholders until the benchmark images exist. Re-baseline from 2-3 bare-metal reference nodes.",
+  "values": {
+    "gpu.vram_gb_usable_min": 253.5,
+    "nvlink.d2d_gbps_min_pair": 764.16,
+    "nvlink.d2d_gbps_aggregate": 42849.47,
+    "nvlink.allreduce_1gb_busbw_gbps": 718.38,
+    "hbm_write_gbps": 6551.0,
+    "cpu.vcpus": 184,
+    "cpu.stream_gbps": 29.84,
+    "cpu.sysbench": 300406.78,
+    "memory_gb": 2660,
+    "nvme.capacity_tb": 3.84,
+    "nvme.seq_read_gbps": 4.8,
+    "nvme.seq_write_gbps": 0.376,
+    "nvme.rand_read_kiops": 255.73,
+    "nvme.rand_write_kiops": 14.68,
+    "nvme.sustained_write_gbps": 0.428,
+    "network.down_gbps": 2.53,
+    "network.up_gbps": 2.38,
+    "power_profile.limit_w": 1100,
+    "training_tokens_per_s": 185000,
+    "inference_tokens_per_s": 42000
+  }
+}

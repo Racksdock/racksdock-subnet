@@ -64,7 +64,8 @@ async def test_validator_neuron_end_to_end(tmp_path):
     host_task = asyncio.create_task(host.run())
     vcfg = ValidatorConfig(platform_url=base, state_dir=tmp_path / "vstate", hotkey="5Gval", chain_kind="mock", chain_file=tmp_path / "chain.json", runner="sim",
                            canary_mean_interval_s=2.0, canary_deadline_s=60, inrental_interval_s=0.0, microbench_interval_s=0.0, reachability_interval_s=0.0,
-                           requal_interval_s=10 ** 9, tempo_s=10 ** 9, loop_interval_s=0.2, trust=trust)
+                           requal_interval_s=10 ** 9, tempo_s=10 ** 9, loop_interval_s=0.2, trust=trust,
+                           reference_set="ref_dev_v0")  # the simulated node reproduces the dev reference, not the real B300 one
     neuron = Verifier(vcfg)  # role 'all': verifies and scores in one process, as the e2e simulation needs
     try:
         async with httpx.AsyncClient(base_url=base, timeout=30) as c:

@@ -31,6 +31,7 @@ class Profile:
     allowlist_entries: tuple[dict, ...]  # extra allowlist entries accepted in dev trust mode
     fio_dir: str = "/data"
     sim_pci_id: str = "10de:b300"
+    sim_reference_set: str = ""        # values the simulated runner emits; empty -> reference_set
     production: bool = False
     notes: str = ""
     extra: dict = field(default_factory=dict)
@@ -55,7 +56,7 @@ def load(name: str) -> Profile:
         name=d["name"], gpu_count=int(d["gpu_count"]), gpu_model=d["gpu_model"], instance_type=d["instance_type"], interconnect=d.get("interconnect", "nvlink"),
         reference_set=d["reference_set"], checks=tuple(d["checks"]), weekly_checks=tuple(d["weekly_checks"]), dcgm_level=int(d.get("dcgm_level", 3)),
         dcgm_level_weekly=int(d.get("dcgm_level_weekly", 2)), power_limit_w=float(d.get("power_limit_w", 0)), allowlist_entries=tuple(d.get("allowlist_entries", [])),
-        fio_dir=d.get("fio_dir", "/data"), sim_pci_id=d.get("sim_pci_id", "10de:b300"), production=bool(d.get("production", False)), notes=d.get("notes", ""),
+        fio_dir=d.get("fio_dir", "/data"), sim_pci_id=d.get("sim_pci_id", "10de:b300"), sim_reference_set=d.get("sim_reference_set", ""), production=bool(d.get("production", False)), notes=d.get("notes", ""),
         extra=d.get("extra", {}),
     )
 

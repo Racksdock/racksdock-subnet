@@ -151,6 +151,19 @@ def plan_targeted_retry(last: dict | None, planned: list[str] | None = None) -> 
     return set(order[first:]) | set(failing)
 
 
+def _flat_measured(spec: dict, prefix: str = "") -> dict[str, float]:
+    """A measured spec as the dotted metrics the reference sets use (cpu.stream_gbps, nvme.seq_write_gbps, ...); unset (0) values
+    are left out so a check that did not run never counts as a zero."""
+    out: dict[str, float] = {}
+    for k, v in spec.items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict):
+            out.update(_flat_measured(v, key + "."))
+        elif isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            out[key] = float(v)
+    return out
+
+
 def merge_measured(base: dict, new: dict) -> dict:
     """Overlay freshly measured values on a previous record's structure: a value counts as fresh unless it is unset (0, '', [], None)."""
     out = dict(base)
@@ -238,8 +251,9 @@ async def qualify_node(cfg: ValidatorConfig, platform: PlatformClient, sessions:
         reran = {c.id for c in checks}
         checks += [CheckResult.model_validate(c) for c in base.get("checks", []) if c.get("id") not in reran]
         checks.sort(key=lambda c: int(c.id[1:]) if c.id[1:].isdigit() else 99)
-        r = {**(base.get("performance") or {}).get("ratios", {}), **r}
         spec_base = base.get("spec_measured")
+        merged = merge_measured(spec_base or {}, spec_from_measured(measured, extra, prof).model_dump())
+        r = ratios(_flat_measured(merged), cfg.reference_set or prof.reference_set)  # one reference for every ratio in the record
     perf = perf_score(r)
     if calibration:
         gate, below = True, []  # reference values unconfirmed for this class: the record carries the measurements, nothing gates

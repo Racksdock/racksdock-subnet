@@ -458,14 +458,14 @@ def test_unanswered_inrental_checks_are_inconclusive_not_failures():
 
     good_before = chk("2026-10-22T04:30:00Z", True)
     unanswered = [chk(f"2026-10-22T12:{m:02d}:00Z", False, agent=False) for m in range(0, 60, 10)]
-    (a,) = build_inputs([node], [lease], [good_before] + unanswered, {"n1": {}}, start, end, "v")
+    (a,) = build_inputs([node], [lease], [good_before, *unanswered], {"n1": {}}, start, end, "v")
     assert a.minutes_rented == 60.0 and a.last_attestation_ok is True
     # same but the SSH port is dead too: nothing served
     dead = [chk(f"2026-10-22T12:{m:02d}:00Z", False, agent=False, port=False) for m in range(0, 60, 10)]
-    (b,) = build_inputs([node], [lease], [good_before] + dead, {"n1": {}}, start, end, "v")
+    (b,) = build_inputs([node], [lease], [good_before, *dead], {"n1": {}}, start, end, "v")
     assert b.minutes_rented == 0.0 and b.last_attestation_ok is True
     # a conclusive mismatch in the window gates the node
-    (c,) = build_inputs([node], [lease], [good_before] + unanswered + [chk("2026-10-22T12:45:00Z", False, agent=True)], {"n1": {}}, start, end, "v")
+    (c,) = build_inputs([node], [lease], [good_before, *unanswered, chk("2026-10-22T12:45:00Z", False, agent=True)], {"n1": {}}, start, end, "v")
     assert c.minutes_rented == 0.0 and c.last_attestation_ok is False
     # legacy records without agent_reachable behave as before (conclusive)
     legacy = {"kind": "inrental", "envelope": {"payload": {"instance_id": "i1", "validator_key": "v", "attestation_ok": False, "gpu_ids_match": False, "checked_at": "2026-10-22T12:30:00Z"}}}
@@ -518,7 +518,7 @@ def test_topology_failure_retry_reruns_failed_and_cut_off_checks_only():
     assert plan_targeted_retry(last, planned) == {"Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13", "Q14", "Q15"}
     assert plan_targeted_retry({**last, "failing_checks": ["Q2"]}, planned) is None  # identity/SKU: full rerun
     # a power-profile failure resumes at Q13: the workload checks after it run again too
-    all_ran = {**last, "failing_checks": ["Q13"], "checks": [{"id": i, "passed": i != "Q13"} for i in ["Q1"] + planned]}
+    all_ran = {**last, "failing_checks": ["Q13"], "checks": [{"id": i, "passed": i != "Q13"} for i in ["Q1", *planned]]}
     assert plan_targeted_retry(all_ran, planned) == {"Q13", "Q14", "Q15"}
 
 
@@ -543,3 +543,22 @@ def test_q13_uses_the_skus_own_power_limit_and_q14_without_benchmark_is_skipped(
     assert r13.details["approved_w"] == 1100.0 and r13.details["under_load"] is True
     r14 = asyncio.run(q14_training(ctx, minutes=1))
     assert r14.skipped and not r14.passed and "not available" in r14.error
+
+
+def test_b300_reference_rates_the_first_real_node_at_one():
+    """ref_b300_v1 is built from the first real B300: its own measurements rate ~1.0, and a targeted retry rates the merged spec
+    against the current reference (not the base record's older ratios)."""
+
+    from racksdock_subnet.core.profile import load as load_profile
+    from racksdock_subnet.validator.qualify import _flat_measured
+    from racksdock_subnet.validator.suite.reference import perf_score, ratios
+
+    assert load_profile("b300x8").reference_set == "ref_b300_v1"
+    spec = {"gpu": {"model": "B300", "count": 8, "vram_gb_usable_min": 253.5}, "nvlink": {"d2d_gbps_min_pair": 764.16, "d2d_gbps_aggregate": 42849.47, "allreduce_1gb_busbw_gbps": 718.38},
+            "cpu": {"model": "Intel(R) Xeon(R) 6776P", "vcpus": 192, "stream_gbps": 29.8352, "sysbench": 300406.78}, "memory_gb": 2660.0, "hbm_write_gbps": 6551.0,
+            "nvme": {"capacity_tb": 3.84, "seq_read_gbps": 4.8, "seq_write_gbps": 0.3756, "rand_read_kiops": 255.7, "rand_write_kiops": 14.68, "sustained_write_gbps": 0.428},
+            "network": {"down_gbps": 2.53, "up_gbps": 2.38}, "power_profile": {"limit_w": 1100.0}, "training_tokens_per_s": 0.0, "inference_tokens_per_s": 0.0}
+    flat = _flat_measured(spec)
+    assert "training_tokens_per_s" not in flat and flat["nvme.seq_write_gbps"] == 0.3756
+    r = ratios(flat, "ref_b300_v1")
+    assert perf_score(r) > 0.99 and all(v > 0.99 for v in r.values())

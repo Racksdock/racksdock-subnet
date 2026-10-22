@@ -28,10 +28,9 @@ def parse_topo(out: str, expected_gpus: int = 8) -> dict[str, Any]:
     gpu_cols: list[int] | None = None
     for ln in lines:
         cells = ln.split()
-        if not re.fullmatch(r"GPU\d+", cells[0] if cells else "") or ln.lstrip() != ln:
-            # the header row is the one whose first cell is GPU0 but that is indented (rows start at column 0 with their label)
-            if cells and re.fullmatch(r"GPU\d+", cells[0]) and gpu_cols is None:
-                gpu_cols = [k for k, c in enumerate(cells) if re.fullmatch(r"GPU\d+", c)]
+        # the header row is the one whose first cell is GPU0 but that is indented (rows start at column 0 with their label)
+        if cells and re.fullmatch(r"GPU\d+", cells[0]) and ln.lstrip() != ln and gpu_cols is None:
+            gpu_cols = [k for k, c in enumerate(cells) if re.fullmatch(r"GPU\d+", c)]
     rows = [ln.split() for ln in lines if ln.lstrip() == ln and re.match(r"GPU\d+\s", ln)]
     gpus = len(rows)
     cols = gpu_cols if gpu_cols else list(range(gpus))

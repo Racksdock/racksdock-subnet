@@ -75,7 +75,7 @@ class SimProfile:
     def __post_init__(self):
         prof = current_profile()
         self.pci_id = self.pci_id or prof.sim_pci_id
-        self.reference = self.reference or prof.reference_set
+        self.reference = self.reference or prof.sim_reference_set or prof.reference_set
         self.gpus = self.gpus or prof.gpu_count
 
     def s(self, key: str) -> float:
