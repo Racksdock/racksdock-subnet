@@ -96,7 +96,9 @@ class Verifier:
             lease = live_by_node.get(nid)
             # new node -> admission + full qualification; admitted (admission passed, no full record yet, e.g. after a validator
             # restart in between) -> full qualification only
-            if n["status"] in ("registered", "admitted") and lease is None:
+            # a failed or crashed attempt backs the node off for retry_quarantined_s (seen: an admission whose verify VM could
+            # not boot was retried every loop iteration, one error instance every 4 s, until the image was fixed)
+            if n["status"] in ("registered", "admitted") and lease is None and now - self.last_requal.get(nid, 0) > self.cfg.retry_quarantined_s:
                 self._spawn(nid, self._admit_and_qualify(n, skip_admission=n["status"] == "admitted"))
                 continue
             # quarantined: retry a full qualification after the retry interval (the miner may have fixed the node)
@@ -156,6 +158,8 @@ class Verifier:
             adm = await admission_test(self.cfg, self.platform, self.sessions, node)
             if adm.outcome != "pass":
                 log.warning("admission failed for %s: %s", node["node_id"][:16], adm.failing_checks)
+                self.last_requal[node["node_id"]] = time.time()  # the next attempt waits retry_quarantined_s
+                self._save_state()
                 return
         await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full")
         # whatever the outcome: a quarantined first attempt waits retry_quarantined_s like any other retry (the miner needs time
