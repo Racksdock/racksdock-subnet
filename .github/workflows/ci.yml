@@ -7,9 +7,15 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: racksdock-subnet }
       - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/racksdock-node", path: racksdock-node }
+        with:
+          repository: "${{ github.repository_owner }}/racksdock-node"
+          path: racksdock-node
+          ssh-key: ${{ secrets.NODE_DEPLOY_KEY }}  # read-only deploy key of racksdock-node (private repos); unset = default token (public repos)
       - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/racksdock-platform", path: racksdock-platform }
+        with:
+          repository: "${{ github.repository_owner }}/racksdock-platform"
+          path: racksdock-platform
+          ssh-key: ${{ secrets.PLATFORM_DEPLOY_KEY }}  # read-only deploy key of racksdock-platform (private repos); unset = default token (public repos)
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -e racksdock-subnet -e racksdock-node -e racksdock-platform && pip install -e "racksdock-subnet[test,dev]"
