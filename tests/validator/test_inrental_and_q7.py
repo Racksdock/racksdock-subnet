@@ -80,7 +80,7 @@ def test_q7_flags_a_gpu_on_a_degraded_link():
 def test_q12_targets_a_port_and_retries_a_busy_iperf_server():
     from racksdock_subnet.validator.suite.checks import iperf_target, q12_network
 
-    assert iperf_target("62.83.43.83") == "-c 62.83.43.83" and iperf_target("62.83.43.83:5202") == "-c 62.83.43.83 -p 5202"
+    assert iperf_target("203.0.113.10") == "-c 203.0.113.10" and iperf_target("203.0.113.10:5202") == "-c 203.0.113.10 -p 5202"
     assert iperf_target("iperf.example.net") == "-c iperf.example.net"
     busy = '{"error": "the server is busy running a test. try again later"}'
     good = '{"end": {"sum_sent": {"bits_per_second": 2.0e10}, "sum_received": {"bits_per_second": 1.5e10}, "sum": {"lost_percent": 0.0}}}'
@@ -105,9 +105,9 @@ def test_q12_targets_a_port_and_retries_a_busy_iperf_server():
 
     rn = Runner()
     with mock.patch("asyncio.sleep", new=mock.AsyncMock()):
-        res = asyncio.run(q12_network(Ctx(rn), endpoints=["62.83.43.83:5202"], seconds=1))
+        res = asyncio.run(q12_network(Ctx(rn), endpoints=["203.0.113.10:5202"], seconds=1))
     assert res.passed and res.details["endpoints"][0]["down_gbps"] == 15.0 and "error" not in res.details["endpoints"][0]
-    assert "-c 62.83.43.83 -p 5202" in rn.calls[0] and len(rn.calls) == 3  # busy once, then up and down
+    assert "-c 203.0.113.10 -p 5202" in rn.calls[0] and len(rn.calls) == 3  # busy once, then up and down
 
 
 def test_q12_serializes_sessions_on_one_endpoint():
@@ -115,8 +115,8 @@ def test_q12_serializes_sessions_on_one_endpoint():
 
     from racksdock_subnet.validator.suite.checks import _iperf_lock
 
-    lock = _iperf_lock("62.83.43.83")
-    assert lock is _iperf_lock("62.83.43.83") and lock is not _iperf_lock("62.83.43.83:5202")
+    lock = _iperf_lock("203.0.113.10")
+    assert lock is _iperf_lock("203.0.113.10") and lock is not _iperf_lock("203.0.113.10:5202")
     assert isinstance(lock, asyncio.Lock)
 
 
