@@ -27,7 +27,7 @@ def evidence_window(window_start: dt.datetime) -> dict[str, str]:
 
 
 def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], verification: dict[str, dict], window_start: dt.datetime, window_end: dt.datetime,
-                 validator_key: str, previously_funded: set[str] | None = None) -> list[NodeInputs]:
+                 validator_key: str) -> list[NodeInputs]:
     """nodes/leases from the validator endpoints; evidence = canary + inrental + probe records in the window (all validators pooled)."""
     tempo_minutes = (window_end - window_start).total_seconds() / 60
     out = []
@@ -104,6 +104,6 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
             duplicate_dispute=False, minutes_rented=rented, minutes_available=available, minutes_failed=failed_min,
             minutes_maintenance=tempo_minutes if n.get("maintenance_until") and _ts(n["maintenance_until"]) > window_start else 0.0,
             strikes=strikes, canary_pass_rate_30d=(can_pass / can_total) if can_total else 1.0, registered_block=int(n.get("registered_block") or 0),
-            previously_funded=nid in (previously_funded or set()), deployment=str((n.get("registration") or {}).get("deployment") or "vm"),
+            deployment=str((n.get("registration") or {}).get("deployment") or "vm"),
         ))
     return out

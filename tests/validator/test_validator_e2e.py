@@ -64,7 +64,7 @@ async def test_validator_neuron_end_to_end(tmp_path):
     host_task = asyncio.create_task(host.run())
     vcfg = ValidatorConfig(platform_url=base, state_dir=tmp_path / "vstate", hotkey="5Gval", chain_kind="mock", chain_file=tmp_path / "chain.json", runner="sim",
                            canary_mean_interval_s=2.0, canary_deadline_s=60, inrental_interval_s=0.0, microbench_interval_s=0.0, reachability_interval_s=0.0,
-                           requal_interval_s=10 ** 9, tempo_s=10 ** 9, loop_interval_s=0.2, trust=trust,
+                           tempo_s=10 ** 9, loop_interval_s=0.2, trust=trust,
                            reference_set="ref_dev_v0")  # the simulated node reproduces the dev reference, not the real B300 one
     neuron = Verifier(vcfg)  # role 'all': verifies and scores in one process, as the e2e simulation needs
     try:
@@ -129,10 +129,10 @@ async def test_validator_neuron_end_to_end(tmp_path):
             probes = await wait_for(lambda: neuron.platform.evidence(instance_id=iid, kind="probe"), desc="probe record")
             assert probes[-1]["envelope"]["payload"]["reachable"] is True
 
-            # scoring: the node is rented and qualified -> funded, miner gets weight
+            # scoring: the node is rented and qualified -> scored, miner gets weight
             now = dt.datetime.now(dt.UTC)
             res = await neuron.score_and_set_weights(now, tempo_s=600)
-            assert rec.node_id in res.funded and res.scores[rec.node_id] > 0.15
+            assert rec.node_id in res.scored and res.scores[rec.node_id] > 0.15
             assert res.details[rec.node_id]["R"] > 0 and res.details[rec.node_id]["P"] > 0.9
             w = chain.weights_of("5Gval")
             miner_uid = chain.uid_of("5Fminer")

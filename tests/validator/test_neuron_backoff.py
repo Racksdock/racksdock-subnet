@@ -21,7 +21,7 @@ class FakePlatform:
 
 def make(nodes, retry_s=600.0) -> Verifier:
     v = Verifier.__new__(Verifier)
-    v.cfg = types.SimpleNamespace(retry_quarantined_s=retry_s, requal_interval_s=7 * 86400, qualification_full=True, role="verifier", tempo_s=10**9,
+    v.cfg = types.SimpleNamespace(retry_quarantined_s=retry_s, qualification_full=True, role="verifier", tempo_s=10**9,
                                   reachability_interval_s=60, inrental_interval_s=60, microbench_interval_s=60)
     v.platform, v.sessions, v.canaries = FakePlatform(nodes), None, None
     v.busy, v.last_requal, v.last_inrental, v.last_microbench, v.last_probe = set(), {}, {}, {}, {}

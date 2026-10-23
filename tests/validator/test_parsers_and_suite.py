@@ -82,9 +82,6 @@ def test_suite_passes_on_healthy_profile_and_quarantines_degraded():
     ctx3 = Ctx(runner=SimRunner(SimProfile(missing_gpu=True)), reference="ref_dev_v0", dev_mode=True, claimed_vcpus=120)
     res3 = run(run_suite(ctx3, kind="full"))
     assert res3[0].id == "Q2" and not res3[0].passed and len(res3) == 1
-    # weekly subset
-    wk = [r.id for r in run(run_suite(Ctx(runner=SimRunner(), reference="ref_dev_v0", dev_mode=True, claimed_vcpus=120), kind="weekly"))]
-    assert "Q14" not in wk and "Q4" in wk and "Q6" in wk
     sm = run(smoke(Ctx(runner=SimRunner(), reference="ref_dev_v0", dev_mode=True, claimed_vcpus=0)))
     assert sm["marker"] == "absent" and sm["nccl_wrong"] == 0 and sm["gpu_memory_verify"] == "ok"
 

@@ -16,11 +16,8 @@ class Params:
     w_p: float = 0.20
     w_r: float = 0.30
     perf_floor: float = 0.90
-    qualification_validity_s: float = 7 * 86400
-    funded_slots: int = 64
     strike_decay_days: float = 30
     exclusion_strikes: float = 3.0
-    hysteresis_tempos: int = 3
 
 
 @dataclass
@@ -40,7 +37,6 @@ class NodeInputs:
     strikes: float                 # decayed active strike weight
     canary_pass_rate_30d: float
     registered_block: int
-    previously_funded: bool = False
     deployment: str = "vm"         # vm | container | static: container and static tiers score at half (docs/04 §3)
 
 
@@ -48,7 +44,7 @@ class NodeInputs:
 class TempoResult:
     tempo_minutes: float
     scores: dict[str, float] = field(default_factory=dict)       # node_id -> S
-    funded: list[str] = field(default_factory=list)
+    scored: list[str] = field(default_factory=list)                # node ids that passed the gate this tempo
     hotkey_weights: dict[str, float] = field(default_factory=dict)
     burn: float = 0.0
     details: dict[str, dict] = field(default_factory=dict)
@@ -71,12 +67,12 @@ def adaptive_weights(p: Params, utilization: float) -> tuple[float, float, float
 def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float, p: Params, utilization_7d: float = 0.0) -> TempoResult:
     res = TempoResult(tempo_minutes=tempo_minutes)
     w_a, w_p, w_r = adaptive_weights(p, utilization_7d)
-    # eligibility (everything in the gate except the funded slot)
+    # the gate
     eligible: list[NodeInputs] = []
     for n in nodes:
         reasons = []
-        if n.qualification_outcome != "pass" or _age_s(n.qualified_at, now) > p.qualification_validity_s:
-            reasons.append("qualification missing or stale")
+        if n.qualification_outcome != "pass":
+            reasons.append("no passing qualification")
         if not n.last_attestation_ok:
             reasons.append("last attestation failed")
         if n.critical_fault:
@@ -88,16 +84,13 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
         if n.perf < p.perf_floor:
             reasons.append("perf below floor")
         if n.minutes_rented + n.minutes_available <= 0:
-            # nothing attested this tempo (host offline, failed canary, no evidence): not eligible, so it takes no funded slot
+            # nothing attested this tempo (host offline, failed canary, no evidence): not eligible
             reasons.append("no attested availability in the window")
         res.details[n.node_id] = {"gate_reasons": reasons}
         if not reasons:
             eligible.append(n)
-    # funded slots: rank by strikes asc, canary pass rate desc, perf desc, registration block asc; previously funded first within ties (hysteresis)
-    ranked = sorted(eligible, key=lambda n: (round(n.strikes, 3), -round(n.canary_pass_rate_30d, 4), -round(n.perf, 4), 0 if n.previously_funded else 1, n.registered_block))
-    funded = ranked[: p.funded_slots]
-    res.funded = [n.node_id for n in funded]
-    for n in funded:
+    res.scored = [n.node_id for n in eligible]
+    for n in eligible:
         denom = max(tempo_minutes - n.minutes_maintenance, 1.0)
         a = min(1.0, (n.minutes_rented + n.minutes_available) / denom)
         pp = min(1.0, max(0.0, (n.perf - p.perf_floor) / (1.0 - p.perf_floor)))
@@ -106,10 +99,10 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
         s = (w_a * a + w_p * pp + w_r * r) * tier
         res.scores[n.node_id] = round(s, 6)
         res.details[n.node_id].update({"A": round(a, 4), "P": round(pp, 4), "R": round(r, 4), "S": round(s, 6), "weights": [w_a, w_p, w_r], "tier": n.deployment, "tier_factor": tier})
-    # hotkey aggregation: every funded node's score goes to its hotkey, weights are proportional, nothing is capped and nothing
-    # burns while at least one miner is funded; with no funded miner at all the whole miner emission goes to the burn uid
+    # hotkey aggregation: every scored node's score goes to its hotkey and weights are proportional, nothing is capped; the whole
+    # miner emission burns only when no node passes the gate
     by_hk: dict[str, float] = {}
-    for n in funded:
+    for n in eligible:
         by_hk[n.hotkey] = by_hk.get(n.hotkey, 0.0) + res.scores[n.node_id]
     total = sum(by_hk.values())
     if total <= 0:
@@ -118,22 +111,6 @@ def score_tempo(nodes: list[NodeInputs], now: dt.datetime, tempo_minutes: float,
     res.hotkey_weights = {hk: round(v / total, 8) for hk, v in by_hk.items()}
     res.burn = 0.0
     return res
-    cap = p.hotkey_cap * total
-    capped = {hk: min(v, cap) for hk, v in by_hk.items()}
-    excess = total - sum(capped.values())
-    # redistribute excess proportionally among uncapped hotkeys (one pass; remainder burns)
-    uncapped = {hk: v for hk, v in capped.items() if 0 < v < cap}  # a zero-score hotkey cannot absorb anything
-    if excess > 0 and uncapped:
-        u_total = sum(uncapped.values())
-        for hk in uncapped:
-            add = excess * uncapped[hk] / u_total
-            capped[hk] = min(cap, capped[hk] + add)
-        excess = total - sum(capped.values())
-    unfilled_fraction = max(0.0, (p.funded_slots - len(funded)) / p.funded_slots) if p.funded_slots else 0.0
-    burn_share = excess / total + unfilled_fraction * (1 - excess / total)
-    scale = (1 - burn_share) / sum(capped.values()) if sum(capped.values()) > 0 else 0.0
-    res.hotkey_weights = {hk: round(v * scale, 8) for hk, v in capped.items()}
-    res.burn = round(1 - sum(res.hotkey_weights.values()), 8)
     return res
 
 

@@ -33,7 +33,6 @@ class ValidatorConfig:
     inrental_interval_s: float = 600
     microbench_interval_s: float = 1800
     reachability_interval_s: float = 60
-    requal_interval_s: float = 7 * 86400
     retry_quarantined_s: float = 3600
     tempo_s: float = 72 * 60
     platform_pubkey: str | None = None  # validators: pin the platform's signing key (default: pinned on first contact in state_dir)
@@ -57,7 +56,7 @@ class ValidatorConfig:
             iperf_endpoints=tuple(x.strip() for x in e("RACKSDOCK_IPERF_ENDPOINTS", "iperf.racksdock-validator.local").split(",") if x.strip()),
             canary_mean_interval_s=float(e("RACKSDOCK_CANARY_MEAN_S", "10800")), canary_deadline_s=float(e("RACKSDOCK_CANARY_DEADLINE_S", "600")),
             inrental_interval_s=float(e("RACKSDOCK_INRENTAL_S", "600")), microbench_interval_s=float(e("RACKSDOCK_MICROBENCH_S", "1800")),
-            reachability_interval_s=float(e("RACKSDOCK_REACH_S", "60")), requal_interval_s=float(e("RACKSDOCK_REQUAL_S", str(7 * 86400))),
+            reachability_interval_s=float(e("RACKSDOCK_REACH_S", "60")),
             retry_quarantined_s=float(e("RACKSDOCK_RETRY_QUARANTINED_S", "3600")),
             tempo_s=float(e("RACKSDOCK_TEMPO_S", str(72 * 60))), loop_interval_s=float(e("RACKSDOCK_LOOP_S", "10")),
                    wallet_name=e("RACKSDOCK_WALLET_NAME", "default"), wallet_hotkey=e("RACKSDOCK_WALLET_HOTKEY", "default"), wallet_path=e("RACKSDOCK_WALLET_PATH") or None,

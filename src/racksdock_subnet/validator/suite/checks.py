@@ -343,7 +343,7 @@ def planned_checks(profile, kind: str, only: set[str] | None = None) -> list[str
     out = []
     for fn in FULL_ORDER:
         cid = fn.__name__.split("_")[0].upper()
-        if profile.enabled(cid, kind) and (only is None or cid in only):
+        if profile.enabled(cid) and (only is None or cid in only):
             out.append(cid)
     return out
 
@@ -355,7 +355,7 @@ async def run_suite(ctx: Ctx, kind: str = "full", only: set[str] | None = None, 
     results = []
     for fn in FULL_ORDER:
         cid = fn.__name__.split("_")[0].upper()
-        if not ctx.profile.enabled(cid, kind):
+        if not ctx.profile.enabled(cid):
             continue
         if only is not None and cid not in only:
             continue
@@ -364,11 +364,7 @@ async def run_suite(ctx: Ctx, kind: str = "full", only: set[str] | None = None, 
         t0 = time.perf_counter()
         try:
             if fn is q4_dcgm:
-                res = await q4_dcgm(ctx, level=ctx.profile.dcgm_level_weekly if kind == "weekly" else ctx.profile.dcgm_level)
-            elif kind == "weekly" and fn is q11_nvme:
-                res = await q11_nvme(ctx, sustained=False)
-            elif kind == "weekly" and fn is q13_power:
-                res = await q13_power(ctx, minutes=min(5, int(ctx.profile.extra.get("power_minutes", 20))))
+                res = await q4_dcgm(ctx, level=ctx.profile.dcgm_level)
             else:
                 res = await fn(ctx)
         except Exception as e:

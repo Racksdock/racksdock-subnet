@@ -295,7 +295,7 @@ class AttestationSummary(BaseModel):
 
 class QualificationRecord(BaseModel):
     schema_: str = Field(default="racksdock.qualification.v1", alias="schema")
-    kind: Literal["full", "weekly", "readiness", "admission"] = "full"
+    kind: Literal["full", "readiness", "admission"] = "full"
     node_id: str
     validator_hotkey: str
     validator_key: str
@@ -573,7 +573,6 @@ class NodeAvailability(BaseModel):
     perf: float
     uptime_30d: float
     verification_url: str
-    funded_slot: bool = True
     operator_owned: bool = False
     profile: str = "b300x8"
     instance_type: str = ""

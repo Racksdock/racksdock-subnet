@@ -24,9 +24,7 @@ class Profile:
     interconnect: str
     reference_set: str
     checks: tuple[str, ...]            # qualification checks that run (Q1 attestation always runs)
-    weekly_checks: tuple[str, ...]
     dcgm_level: int
-    dcgm_level_weekly: int
     power_limit_w: float               # approved GPU power limit; 0 = do not enforce
     allowlist_entries: tuple[dict, ...]  # extra allowlist entries accepted in dev trust mode
     fio_dir: str = "/data"
@@ -40,8 +38,8 @@ class Profile:
     def nccl_gpus(self) -> int:
         return self.gpu_count
 
-    def enabled(self, check_id: str, kind: str = "full") -> bool:
-        return check_id in (self.weekly_checks if kind == "weekly" else self.checks)
+    def enabled(self, check_id: str) -> bool:
+        return check_id in self.checks
 
 
 def available() -> list[str]:
@@ -54,8 +52,8 @@ def load(name: str) -> Profile:
         d = json.load(f)
     return Profile(
         name=d["name"], gpu_count=int(d["gpu_count"]), gpu_model=d["gpu_model"], instance_type=d["instance_type"], interconnect=d.get("interconnect", "nvlink"),
-        reference_set=d["reference_set"], checks=tuple(d["checks"]), weekly_checks=tuple(d["weekly_checks"]), dcgm_level=int(d.get("dcgm_level", 3)),
-        dcgm_level_weekly=int(d.get("dcgm_level_weekly", 2)), power_limit_w=float(d.get("power_limit_w", 0)), allowlist_entries=tuple(d.get("allowlist_entries", [])),
+        reference_set=d["reference_set"], checks=tuple(d["checks"]), dcgm_level=int(d.get("dcgm_level", 3)),
+        power_limit_w=float(d.get("power_limit_w", 0)), allowlist_entries=tuple(d.get("allowlist_entries", [])),
         fio_dir=d.get("fio_dir", "/data"), sim_pci_id=d.get("sim_pci_id", "10de:b300"), sim_reference_set=d.get("sim_reference_set", ""), production=bool(d.get("production", False)), notes=d.get("notes", ""),
         extra=d.get("extra", {}),
     )

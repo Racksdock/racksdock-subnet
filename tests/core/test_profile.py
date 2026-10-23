@@ -23,7 +23,7 @@ def a100(monkeypatch):
 def test_profiles_available_and_defaults():
     assert set(profile.available()) >= {"b300x8", "a100-dev"}
     p = profile.current()
-    assert p.name == "b300x8" and p.gpu_count == 8 and p.production and p.enabled("Q8") and not p.enabled("Q14", "weekly")
+    assert p.name == "b300x8" and p.gpu_count == 8 and p.production and p.enabled("Q8") and not p.enabled("Q99")
 
 
 def test_a100_profile_is_one_gpu_and_excludes_multi_gpu_checks(a100):
@@ -106,6 +106,6 @@ def test_scorer_halves_container_and_static_tiers():
                           duplicate_dispute=False, minutes_rented=72, minutes_available=0, minutes_failed=0, minutes_maintenance=0, strikes=0, canary_pass_rate_30d=1.0,
                           registered_block=1, deployment=dep)
 
-    res = score_tempo([node("vm", "vm"), node("ct", "container"), node("st", "static")], dt.datetime.now(dt.UTC), 72, Params(funded_slots=8))
+    res = score_tempo([node("vm", "vm"), node("ct", "container"), node("st", "static")], dt.datetime.now(dt.UTC), 72, Params())
     assert res.scores["ct"] == res.scores["st"] and abs(res.scores["vm"] - 2 * res.scores["ct"]) < 1e-6
     assert res.details["ct"]["tier_factor"] == 0.5 and res.details["vm"]["tier"] == "vm"

@@ -16,17 +16,7 @@
     "Q12",
     "Q13"
   ],
-  "weekly_checks": [
-    "Q2",
-    "Q3",
-    "Q4",
-    "Q9",
-    "Q11",
-    "Q12",
-    "Q13"
-  ],
   "dcgm_level": 2,
-  "dcgm_level_weekly": 1,
   "power_limit_w": 0,
   "allowlist_entries": [
     {

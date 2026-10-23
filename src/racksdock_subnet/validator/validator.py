@@ -31,11 +31,7 @@ def score_snapshot(payload: dict, now: dt.datetime | None = None) -> TempoResult
     """The deterministic part: the public scorer over the snapshot's inputs and parameters."""
     now = now or dt.datetime.fromisoformat(payload["window_end"])
     inputs = inputs_from_snapshot(payload)
-    prev = set(payload.get("previously_funded") or [])
-    for i in inputs:
-        i.previously_funded = i.node_id in prev
-    return score_tempo(inputs, now, float(payload["tempo_s"]) / 60, Params(funded_slots=int(payload.get("funded_slots", 64))),
-                       utilization_7d=float(payload.get("utilization_7d", 0.0)))
+    return score_tempo(inputs, now, float(payload["tempo_s"]) / 60, Params(), utilization_7d=float(payload.get("utilization_7d", 0.0)))
 
 
 def rebuild_inputs(fetch_json, payload: dict) -> list[NodeInputs]:
@@ -61,7 +57,7 @@ def rebuild_inputs(fetch_json, payload: dict) -> list[NodeInputs]:
     for kind, since in evidence_window(window_start).items():
         evidence += fetch_json("/v1/evidence", {"kind": kind, "since": since, "limit": 1000, "desc": "true"})["records"]
     evidence.sort(key=lambda e: e["id"])
-    return build_inputs(nodes, leases, evidence, verification, window_start, window_end, "", set(payload.get("previously_funded") or []))
+    return build_inputs(nodes, leases, evidence, verification, window_start, window_end, "")
 
 
 def compare_inputs(snapshot_inputs: list[NodeInputs], rebuilt: list[NodeInputs]) -> list[str]:
@@ -147,17 +143,17 @@ class Validator:
         result = score_snapshot(payload)
         rounds = (await fetch_async("/v1/scoring/rounds", {"limit": 5}))["rounds"]
         mine = next((r for r in rounds if r["window_end"] == payload["window_end"]), None)
-        if mine is not None and (mine["funded"] != result.funded or {k: round(v, 8) for k, v in mine["hotkey_weights"].items()} != {k: round(v, 8) for k, v in result.hotkey_weights.items()}):
-            diffs.append(f"platform round for {payload['window_end']}: funded={mine['funded']} weights={mine['hotkey_weights']} vs ours funded={result.funded} weights={result.hotkey_weights}")
+        if mine is not None and (mine["scored"] != result.scored or {k: round(v, 8) for k, v in mine["hotkey_weights"].items()} != {k: round(v, 8) for k, v in result.hotkey_weights.items()}):
+            diffs.append(f"platform round for {payload['window_end']}: scored={mine['scored']} weights={mine['hotkey_weights']} vs ours scored={result.scored} weights={result.hotkey_weights}")
         return diffs
 
     async def score_once(self) -> TempoResult:
         payload = await self.fetch_snapshot()
         result = score_snapshot(payload)
         weights = set_weights(self.chain, self.cfg.hotkey, result)
-        (self.cfg.state_dir / "last_scoring.json").write_text(json.dumps({"window_end": payload["window_end"], "scores": result.scores, "funded": result.funded,
+        (self.cfg.state_dir / "last_scoring.json").write_text(json.dumps({"window_end": payload["window_end"], "scores": result.scores, "scored": result.scored,
                                                                             "hotkey_weights": result.hotkey_weights, "burn": result.burn, "weights": {str(k): v for k, v in weights.items()}}, indent=1))
-        log.info("scoring: %d node(s), funded %s, burn %.4f, weights %s", len(result.scores), [n[:16] for n in result.funded], result.burn, weights)
+        log.info("scoring: %d node(s), scored %s, burn %.4f, weights %s", len(result.scores), [n[:16] for n in result.scored], result.burn, weights)
         return result
 
     async def run(self) -> None:

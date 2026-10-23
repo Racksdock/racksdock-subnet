@@ -124,6 +124,6 @@ def score():
     async def go():
         await n.ensure_enrolled()
         res = await n.score_and_set_weights(dt.datetime.now(dt.UTC))
-        typer.echo(json.dumps({"scores": res.scores, "funded": res.funded, "hotkey_weights": res.hotkey_weights, "burn": res.burn}, indent=1))
+        typer.echo(json.dumps({"scores": res.scores, "scored": res.scored, "hotkey_weights": res.hotkey_weights, "burn": res.burn}, indent=1))
 
     asyncio.run(go())

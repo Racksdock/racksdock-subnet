@@ -189,13 +189,13 @@ def test_validators_score_a_snapshot_deterministically(tmp_path):
     now = "2026-10-22T02:00:00+00:00"
     inp = {"node_id": "sha256:n1", "hotkey": "5Fm1", "qualified_at": "2026-10-22T01:00:00Z", "qualification_outcome": "pass", "perf": 1.0, "last_attestation_ok": True,
            "critical_fault": False, "duplicate_dispute": False, "minutes_rented": 5.0, "minutes_available": 0.0, "minutes_failed": 0.0, "minutes_maintenance": 0.0,
-           "strikes": 0.0, "canary_pass_rate_30d": 1.0, "registered_block": 10, "previously_funded": False, "deployment": "vm"}
+           "strikes": 0.0, "canary_pass_rate_30d": 1.0, "registered_block": 10, "deployment": "vm"}
     inp2 = {**inp, "node_id": "sha256:n2", "hotkey": "5Fm2", "deployment": "container", "registered_block": 11}
-    payload = {"schema": "racksdock.scoring-snapshot.v1", "window_start": "2026-10-22T01:55:00+00:00", "window_end": now, "tempo_s": 300, "funded_slots": 2,
-               "utilization_7d": 1.0, "previously_funded": ["sha256:n2"], "inputs": [inp, inp2]}
+    payload = {"schema": "racksdock.scoring-snapshot.v1", "window_start": "2026-10-22T01:55:00+00:00", "window_end": now, "tempo_s": 300,
+               "utilization_7d": 1.0, "inputs": [inp, inp2]}
     r1, r2 = score_snapshot(payload), score_snapshot(payload)
-    assert r1.hotkey_weights == r2.hotkey_weights and r1.funded == r2.funded
-    # the container node scores at half (S 0.5 vs 1.0); weights are proportional, no cap, nothing burns while miners are funded
+    assert r1.hotkey_weights == r2.hotkey_weights and r1.scored == r2.scored
+    # the container node scores at half (S 0.5 vs 1.0); weights are proportional, no cap, nothing burns while nodes are scored
     assert r1.scores["sha256:n1"] == 1.0 and r1.scores["sha256:n2"] == 0.5
     assert abs(r1.hotkey_weights["5Fm1"] - 2 / 3) < 1e-6 and abs(r1.hotkey_weights["5Fm2"] - 1 / 3) < 1e-6 and r1.burn == 0.0
     chain = build_chain("mock", path=tmp_path / "chain.json", netuid=1, network="x")
@@ -247,7 +247,7 @@ async def test_suite_reports_each_step_to_the_progress_hook(monkeypatch):
     monkeypatch.setattr(ck, "FULL_ORDER", [q98_fake, q99_boom])
 
     class Prof:
-        def enabled(self, cid, kind):
+        def enabled(self, cid):
             return True
 
     class Prog:
@@ -368,7 +368,7 @@ def test_host_outages_score_as_failed_not_idle_or_rented():
 
 
 def test_no_attested_availability_pays_nothing_and_fresh_qualification_counts():
-    """A funded node with neither rented nor attested-available minutes (host offline all tempo) scores 0 even with perfect perf,
+    """A node with neither rented nor attested-available minutes (host offline all tempo) scores 0 even with perfect perf,
     and the redistribution survives a zero-score hotkey; a node qualified within 6 h is available until its first canary."""
     import datetime as dt
 
@@ -382,9 +382,9 @@ def test_no_attested_availability_pays_nothing_and_fresh_qualification_counts():
                           duplicate_dispute=False, minutes_rented=rented, minutes_available=avail, minutes_failed=0.0, minutes_maintenance=0.0, strikes=0.0,
                           canary_pass_rate_30d=1.0, registered_block=1, deployment="container")
 
-    res = score_tempo([ni("off", "hk2", 0.0, 0.0), ni("on", "hk3", 0.0, 21.0)], now, 21.0, Params(funded_slots=2))
-    assert "off" not in res.funded and "no attested availability in the window" in res.details["off"]["gate_reasons"]  # takes no slot
-    # the single funded node's hotkey gets everything: no cap, and nothing burns while a miner is funded
+    res = score_tempo([ni("off", "hk2", 0.0, 0.0), ni("on", "hk3", 0.0, 21.0)], now, 21.0, Params())
+    assert "off" not in res.scored and "no attested availability in the window" in res.details["off"]["gate_reasons"]  # takes no slot
+    # the single scored node's hotkey gets everything: no cap, and nothing burns while a node is scored
     assert res.scores["on"] > 0 and res.hotkey_weights.get("hk2", 0.0) == 0.0 and abs(res.hotkey_weights["hk3"] - 1.0) < 1e-6 and res.burn == 0.0
     # freshly qualified, no canary yet: idle minutes count as available
     start, end = now - dt.timedelta(minutes=21), now

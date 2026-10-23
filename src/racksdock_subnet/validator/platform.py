@@ -80,9 +80,6 @@ class PlatformClient:
     async def recover(self, instance_id: str) -> None:
         self._check(await self.c.post(f"/v1/validators/incidents/{instance_id}/recover"))
 
-    async def settings(self) -> dict:
-        return self._check(await self.c.get("/v1/validators/settings"))
-
     async def evidence(self, **params) -> list[dict]:
         return self._check(await self.c.get("/v1/evidence", params={k: v for k, v in params.items() if v is not None}))["records"]
 

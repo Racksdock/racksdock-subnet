@@ -51,7 +51,6 @@ class Verifier:
         self.last_probe: dict[str, float] = {}
         self.last_requal: dict[str, float] = {}
         self.tempo_start = time.time()
-        self.previously_funded: set[str] = set()
         self.busy: set[str] = set()
         self._stop = asyncio.Event()
         self._stats_path = cfg.state_dir / "state.json"
@@ -61,12 +60,11 @@ class Verifier:
         try:
             st = json.loads(self._stats_path.read_text())
             self.last_requal = st.get("last_requal", {})
-            self.previously_funded = set(st.get("previously_funded", []))
         except (OSError, ValueError):
             pass
 
     def _save_state(self) -> None:
-        self._stats_path.write_text(json.dumps({"last_requal": self.last_requal, "previously_funded": sorted(self.previously_funded)}))
+        self._stats_path.write_text(json.dumps({"last_requal": self.last_requal}))
 
     async def ensure_enrolled(self) -> None:
         if not self.cfg.api_key:
@@ -111,10 +109,6 @@ class Verifier:
                 # readiness canary after a tenant rental
                 if n.get("needs_readiness"):
                     self._spawn(nid, run_canary(self.cfg, self.platform, self.sessions, n, kind="readiness"))
-                    continue
-                # weekly re-qualification
-                if now - self.last_requal.get(nid, 0) > self.cfg.requal_interval_s:
-                    self._spawn(nid, self._requal(n))
                     continue
                 # idle canary
                 if self.canaries.due(nid, now):
@@ -193,14 +187,6 @@ class Verifier:
         rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="full", only=only, base=base if only else None)
         log.info("retry of quarantined node %s -> %s %s", node["node_id"][:16], rec.outcome, rec.failing_checks)
 
-    async def _requal(self, node: dict) -> None:
-        try:
-            rec = await qualify_node(self.cfg, self.platform, self.sessions, node, kind="weekly")
-            log.info("weekly requal %s -> %s", node["node_id"][:16], rec.outcome)
-        finally:
-            self.last_requal[node["node_id"]] = time.time()  # pass, quarantine or crash: the next attempt waits the interval
-            self._save_state()
-
     # ------------------------------------------------------------------ scoring
     async def score_and_set_weights(self, now: dt.datetime, tempo_s: float | None = None):
         if self.chain is None:
@@ -220,17 +206,14 @@ class Verifier:
                 verification[n["node_id"]] = await self.platform.node_verification(n["node_id"])
             except RuntimeError:
                 verification[n["node_id"]] = {}
-        settings = await self.platform.settings()
-        params = Params(funded_slots=int(settings.get("funded_slots", 64)))
-        inputs = build_inputs(nodes, leases, evidence, verification, window_start, now, self.key.public.hex, self.previously_funded)
+        params = Params()
+        inputs = build_inputs(nodes, leases, evidence, verification, window_start, now, self.key.public.hex)
         rented = sum(i.minutes_rented for i in inputs)
         avail = sum(i.minutes_available for i in inputs)
         util = rented / (rented + avail) if (rented + avail) > 0 else 0.0
         result = score_tempo(inputs, now, tempo_s / 60, params, utilization_7d=util)
-        self.previously_funded = set(result.funded)
-        self._save_state()
         weights = set_weights(self.chain, self.cfg.hotkey, result)
-        await self.platform.publish("scoring", {"window_start": window_start.isoformat(), "window_end": now.isoformat(), "scores": result.scores, "funded": result.funded,
+        await self.platform.publish("scoring", {"window_start": window_start.isoformat(), "window_end": now.isoformat(), "scores": result.scores, "scored": result.scored,
                                                 "hotkey_weights": result.hotkey_weights, "burn": result.burn, "details": result.details, "weights": {str(k): v for k, v in weights.items()}})
         return result
 
