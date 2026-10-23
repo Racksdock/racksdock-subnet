@@ -46,7 +46,7 @@ async def wait_for(fn, timeout=90, interval=0.3, desc="condition"):
 async def test_validator_neuron_end_to_end(tmp_path):
     ca = DevCA.create(tmp_path / "ca")
     trust = TrustConfig(mode="dev", dev_ca_dir=ca.dir)
-    settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", base_url="http://test", chain_kind="mock", chain_file=tmp_path / "chain.json", probe_timeout_s=1.0, trust=trust)
+    settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", base_url="http://test", chain_kind="mock", chain_file=tmp_path / "chain.json", platform_key_path=tmp_path / "platform.key", probe_timeout_s=1.0, trust=trust)
     app = create_app(settings, background=False)
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))

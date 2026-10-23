@@ -27,7 +27,7 @@ def free_port():
 async def test_miner_bootstraps_and_registers_node(tmp_path):
     ca = DevCA.create(tmp_path / "ca")
     trust = TrustConfig(mode="dev", dev_ca_dir=ca.dir)
-    settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", chain_kind="mock", chain_file=tmp_path / "chain.json", trust=trust)
+    settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", chain_kind="mock", chain_file=tmp_path / "chain.json", platform_key_path=tmp_path / "platform.key", trust=trust)
     app = create_app(settings, background=False)
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
