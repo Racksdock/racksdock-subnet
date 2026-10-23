@@ -562,3 +562,26 @@ def test_b300_reference_rates_the_first_real_node_at_one():
     assert "training_tokens_per_s" not in flat and flat["nvme.seq_write_gbps"] == 0.3756
     r = ratios(flat, "ref_b300_v1")
     assert perf_score(r) > 0.99 and all(v > 0.99 for v in r.values())
+
+
+def test_a_released_rentals_last_failed_check_does_not_gate_the_node_later():
+    """Seen on the 8x4090: the tenant's VM stopped answering attestation challenges in its last minutes, the rental ended, the node
+    passed a full qualification and a canary, and four hours later it still showed 'last attestation failed'. An ended rental's
+    checks count only inside their own window; a live rental's latest check still carries forward."""
+    import datetime as dt
+
+    from racksdock_subnet.validator.snapshot import build_inputs
+
+    end = dt.datetime(2026, 10, 23, 17, 5, tzinfo=dt.UTC)
+    start = end - dt.timedelta(minutes=5)
+    node = {"node_id": "n1", "miner_hotkey": "hk", "status": "qualified", "qualified_at": "2026-10-23T13:12:50Z", "qualification": {"outcome": "pass"}, "perf": 1.0}
+    failed_check = {"kind": "inrental", "node_id": "n1", "instance_id": "inst_old", "validator_key": "v", "checked_at": "2026-10-23T12:17:00Z",
+                    "attestation_ok": False, "gpu_ids_match": False, "reachable": True, "agent_reachable": True, "error": "challenge failed"}
+    canary = {"kind": "canary", "node_id": "n1", "outcome": "pass", "finished_at": "2026-10-23T16:06:00Z"}
+    evidence = [{"kind": "inrental", "envelope": {"payload": failed_check}}, {"kind": "canary", "envelope": {"payload": canary}}]
+    ended = {"lease_id": "l1", "node_id": "n1", "instance_id": "inst_old", "is_validator": False, "active_at": "2026-10-23T09:00:00Z", "released_at": "2026-10-23T12:20:00Z", "status": "deleted"}
+    (a,) = build_inputs([node], [ended], evidence, {"n1": {}}, start, end, "v")
+    assert a.last_attestation_ok is True and a.minutes_rented == 0.0 and a.minutes_available == 5.0  # idle, vouched for by the canary
+    live = {**ended, "released_at": None, "status": "active"}
+    (b,) = build_inputs([node], [live], evidence, {"n1": {}}, start, end, "v")
+    assert b.last_attestation_ok is False and b.minutes_rented == 0.0  # still rented and still failing: gated, as before

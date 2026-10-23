@@ -65,9 +65,10 @@ def build_inputs(nodes: list[dict], leases: list[dict], evidence: list[dict], ve
             # state comes from conclusive checks only; such minutes still count as rented while the instance's SSH port answers
             conclusive = [c for c in observed if c.get("agent_reachable") is not False]
             # only this window's checks count (an old failure must not gate a node forever); with none in the window, the latest
-            # conclusive check decides the attestation state
+            # conclusive check decides the attestation state, but only while the rental is still live: once it is released the
+            # readiness canary and any later qualification re-attest the GPUs, so an ended rental's last check says nothing now
             in_window = [c for c in conclusive if not c.get("checked_at") or window_start <= _ts(c["checked_at"]) <= window_end]
-            if not in_window and conclusive:
+            if not in_window and conclusive and not lease.get("released_at"):
                 in_window = [max(conclusive, key=lambda c: c.get("checked_at") or "")]
             inconclusive_in_window = [c for c in observed if c.get("agent_reachable") is False and c.get("checked_at") and window_start <= _ts(c["checked_at"]) <= window_end]
             att_ok = bool(in_window) and all(c["attestation_ok"] and c["gpu_ids_match"] for c in in_window)
